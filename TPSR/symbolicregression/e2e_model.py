@@ -1,6 +1,10 @@
 from torch import nn
+import pathlib
 import torch
 import numpy as np
+
+# Allow loading Linux-trained checkpoints on Windows.
+pathlib.PosixPath = pathlib.WindowsPath  # type: ignore[misc, assignment]
 from symbolicregression.model.model_wrapper import ModelWrapper
 from symbolicregression.model.sklearn_wrapper import SymbolicTransformerRegressor , get_top_k_features
 import time 
@@ -9,7 +13,10 @@ import time
 class Transformer(nn.Module):
     def __init__(self, params, env, samples):
         super().__init__()
-        self.model = torch.load('./symbolicregression/weights/model.pt')
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = torch.load(
+            "./symbolicregression/weights/model.pt", map_location=device
+        )
         self.first_dropout = nn.Dropout(0.1)
         self.params = params
         self.env = env

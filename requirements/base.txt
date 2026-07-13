@@ -1,0 +1,24 @@
+# Phase 0 environment (verified on Windows, CPU).
+# Python 3.10 or 3.11 required (NOT installable via pip — use conda/venv).
+#   conda create -n ltsr-phase0 python=3.10 pip
+#   conda activate ltsr-phase0
+#   pip install -r requirements/base.txt
+#   pip install "setuptools<81" pysr
+
+setuptools>=80,<81
+numpy>=2.0,<3
+sympy==1.13.1
+torch==2.5.1
+pytorch-lightning==1.9.5
+hydra-core==1.0.0
+omegaconf==2.1.2
+# Install NeSymReS from repo root:
+#   pip install -e NSRS/src/
+
+# TPSR extras
+sympytorch>=0.1.4
+zss>=1.2.0
+tensorboardX>=2.6
+gym>=0.26.2
+seaborn>=0.13
+matplotlib>=3.10

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import CodeType
 from typing import List, Tuple
 from torch.distributions import Uniform, Normal, Distribution
@@ -97,7 +97,7 @@ class FitParams:
     rewrite_functions: list
     una_ops: list = None
     bin_ops: list = None
-    bfgs: BFGSParams = BFGSParams()
+    bfgs: BFGSParams = field(default_factory=BFGSParams)
     beam_size: int = 2
     
 # @dataclass
