@@ -43,6 +43,7 @@ from data.human import (  # noqa: E402
 from data.regulator_selection import oracle_regulators  # noqa: E402
 from data.synthetic_grn import SampledDataset  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.aggregation import aggregate_prediction_scores  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from models.tpsr_adapter import predict_equation_tpsr  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
@@ -61,7 +62,7 @@ from training.selective_layers import resolve_selected_layers  # noqa: E402
 # High-contribution layer set = top-k of the Phase 4 accuracy ranking (principled
 # a-priori; NOT the earlier post-hoc middle_3). Falls back to the frozen ranking
 # if contributions.json is absent.
-_PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4" / "contributions.json"
+_PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4_multiseed" / "contrib_aggregate.json"
 HIGH_CONTRIB, _HC_SOURCE, _HC_RULE = resolve_selected_layers(
     _PHASE4_CONTRIB, mode="accuracy", rule="top", k=3
 )
@@ -151,7 +152,7 @@ def eval_sr(model, params_fit, problems, decode: str = "beam", tpsr_kw=None) -> 
     import warnings
 
     tpsr_kw = tpsr_kw or {}
-    nmses, r2s, rows = [], [], []
+    rows = []
     for ds in problems:
         expr = ""
         try:
@@ -173,17 +174,8 @@ def eval_sr(model, params_fit, problems, decode: str = "beam", tpsr_kw=None) -> 
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
         sc = score_prediction(ds.y, y_hat, expr, ds.spec.variable_names, true_expr="")
         rows.append({"eq_id": ds.spec.eq_id, "pred": expr, **sc})
-        if np.isfinite(sc["nmse"]):
-            nmses.append(sc["nmse"])
-        if np.isfinite(sc["r2"]):
-            r2s.append(sc["r2"])
     return {
-        "aggregate": {
-            "n_eval": float(len(problems)),
-            "n_valid": float(len(nmses)),
-            "nmse": float(np.median(nmses)) if nmses else float("inf"),
-            "r2": float(np.median(r2s)) if r2s else float("-inf"),
-        },
+        "aggregate": aggregate_prediction_scores(rows),
         "per_problem": rows,
     }
 
@@ -206,7 +198,7 @@ def eval_holdout_donor(
 
     tpsr_kw = tpsr_kw or {}
     network = panel.as_grn_like()
-    nmses, r2s, rows = [], [], []
+    rows = []
     for ds in train_problems:
         # recover target index from motif annotation
         motif = ds.spec.motif or ""
@@ -249,17 +241,8 @@ def eval_holdout_donor(
         y_hat = eval_expression(expr, te.X, te.spec.variable_names) if expr else None
         sc = score_prediction(te.y, y_hat, expr, te.spec.variable_names, true_expr="")
         rows.append({"eq_id": te.spec.eq_id, "target": tname, "pred": expr, **sc})
-        if np.isfinite(sc["nmse"]):
-            nmses.append(sc["nmse"])
-        if np.isfinite(sc["r2"]):
-            r2s.append(sc["r2"])
     return {
-        "aggregate": {
-            "n_eval": float(len(rows)),
-            "n_valid": float(len(nmses)),
-            "nmse": float(np.median(nmses)) if nmses else float("inf"),
-            "r2": float(np.median(r2s)) if r2s else float("-inf"),
-        },
+        "aggregate": aggregate_prediction_scores(rows),
         "per_problem": rows,
     }
 
@@ -433,8 +416,6 @@ def main() -> int:
         log("  pysr")
         t0 = time.time()
         pysr_rows = []
-        nmses, r2s = [], []
-        hold_nmses, hold_r2s = [], []
         hold_rows = []
         network = panel.as_grn_like()
         for ds in prior_probs:
@@ -446,10 +427,6 @@ def main() -> int:
             y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
             sc = score_prediction(ds.y, y_hat, expr, ds.spec.variable_names, true_expr="")
             pysr_rows.append({"eq_id": ds.spec.eq_id, "pred": expr, **sc})
-            if np.isfinite(sc["nmse"]):
-                nmses.append(sc["nmse"])
-            if np.isfinite(sc["r2"]):
-                r2s.append(sc["r2"])
 
             motif = ds.spec.motif or ""
             tname = motif.split("target=")[-1].split(";")[0] if "target=" in motif else ""
@@ -474,28 +451,14 @@ def main() -> int:
                     te.y, y_hat_te, expr, te.spec.variable_names, true_expr=""
                 )
                 hold_rows.append({"eq_id": te.spec.eq_id, "target": tname, "pred": expr, **sc_te})
-                if np.isfinite(sc_te["nmse"]):
-                    hold_nmses.append(sc_te["nmse"])
-                if np.isfinite(sc_te["r2"]):
-                    hold_r2s.append(sc_te["r2"])
 
         compare_in["pysr"] = {
-            "aggregate": {
-                "n_eval": float(len(prior_probs)),
-                "n_valid": float(len(nmses)),
-                "nmse": float(np.median(nmses)) if nmses else float("inf"),
-                "r2": float(np.median(r2s)) if r2s else float("-inf"),
-            },
+            "aggregate": aggregate_prediction_scores(pysr_rows),
             "per_problem": pysr_rows,
             "elapsed_sec": time.time() - t0,
         }
         compare_hold["pysr"] = {
-            "aggregate": {
-                "n_eval": float(len(hold_rows)),
-                "n_valid": float(len(hold_nmses)),
-                "nmse": float(np.median(hold_nmses)) if hold_nmses else float("inf"),
-                "r2": float(np.median(hold_r2s)) if hold_r2s else float("-inf"),
-            },
+            "aggregate": aggregate_prediction_scores(hold_rows),
             "per_problem": hold_rows,
         }
         log(

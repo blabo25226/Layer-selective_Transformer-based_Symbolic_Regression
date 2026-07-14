@@ -25,20 +25,21 @@ from data.finetune_dataset import (  # noqa: E402
     load_split_problems,
 )
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.aggregation import aggregate_prediction_scores, true_variables  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from models.tpsr_adapter import predict_equation_tpsr  # noqa: E402
 from training.selective_layers import resolve_selected_layers  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
 DATA_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
 # Checkpoint/config env-overridable for GPU runs (e.g. LTSR_WEIGHTS=.../100M.ckpt)
 WEIGHTS = Path(os.environ.get("LTSR_WEIGHTS", str(ROOT / "NSRS" / "weights" / "10M.ckpt")))
 CONFIG = Path(os.environ.get("LTSR_CONFIG", str(ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml")))
 EQ_SETTING = Path(os.environ.get("LTSR_EQ_SETTING", str(ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json")))
-OUT_DIR = ROOT / "results" / "phase_results" / "phase6"
-REPORT = ROOT / "results" / "phase_results" / "phase6_report.md"
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase6", "phase6_report.md")
 
-PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4" / "contributions.json"
+PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4_multiseed" / "contrib_aggregate.json"
 
 
 def log(msg: str) -> None:
@@ -83,13 +84,6 @@ def eval_one(
 
     tpsr_kwargs = tpsr_kwargs or {}
     rows = []
-    buckets = {
-        "nmse": [],
-        "r2": [],
-        "var_f1": [],
-        "sym_recovery": [],
-        "complexity": [],
-    }
     times = []
 
     for ds in problems:
@@ -125,7 +119,8 @@ def eval_one(
         times.append(elapsed)
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
         sc = score_prediction(
-            ds.y, y_hat, expr, ds.spec.variable_names, true_expr=true_expr
+            ds.y, y_hat, expr, true_variables(true_expr, ds.spec.variable_names),
+            true_expr=true_expr
         )
         rows.append(
             {
@@ -137,23 +132,9 @@ def eval_one(
                 **sc,
             }
         )
-        for k in buckets:
-            v = sc[k]
-            if np.isfinite(v):
-                buckets[k].append(float(v))
-
-    agg = {
-        "n_eval": float(len(problems)),
-        "n_valid": float(len(buckets["nmse"])),
-        "nmse": float(np.median(buckets["nmse"])) if buckets["nmse"] else float("inf"),
-        "r2": float(np.median(buckets["r2"])) if buckets["r2"] else float("-inf"),
-        "var_f1": float(np.mean(buckets["var_f1"])) if buckets["var_f1"] else float("nan"),
-        "sym_rate": float(np.mean(buckets["sym_recovery"]))
-        if buckets["sym_recovery"]
-        else 0.0,
-        "mean_time_sec": float(np.mean(times)) if times else float("nan"),
-        "total_time_sec": float(np.sum(times)) if times else float("nan"),
-    }
+    agg = aggregate_prediction_scores(rows)
+    agg["mean_time_sec"] = float(np.mean(times)) if times else float("nan")
+    agg["total_time_sec"] = float(np.sum(times)) if times else float("nan")
     return {"aggregate": agg, "per_problem": rows}
 
 
@@ -349,7 +330,7 @@ def main() -> int:
 
     # Delta table: FT effect, TPSR effect, interaction
     def nmse(key: str) -> float:
-        return float(by[key]["eval"]["nmse"])
+        return float(by[key]["eval"]["penalized_nmse"])
 
     def r2(key: str) -> float:
         return float(by[key]["eval"]["r2"])

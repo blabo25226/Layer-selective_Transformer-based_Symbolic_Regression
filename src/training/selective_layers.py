@@ -19,7 +19,7 @@ from typing import Dict, List, Mapping, Optional, Sequence
 # Metric keys (as written by scripts/phase4_layer_contribution.py) that define
 # each ranking mode. "accuracy" = mean rank across CE + prediction metrics;
 # "ce" = teacher-forcing cross-entropy only.
-ACCURACY_METRICS: List[str] = ["val_ce", "nmse", "r2"]
+ACCURACY_METRICS: List[str] = ["val_ce", "penalized_nmse", "penalized_r2"]
 CE_METRICS: List[str] = ["val_ce"]
 RANKING_METRICS: Dict[str, List[str]] = {
     "accuracy": ACCURACY_METRICS,
@@ -82,6 +82,10 @@ def ranking_from_contributions(
     if mode not in RANKING_METRICS:
         raise ValueError(f"Unknown ranking mode {mode!r}; use {list(RANKING_METRICS)}")
     metrics = [m for m in RANKING_METRICS[mode] if m in contrib_tables]
+    if mode == "accuracy" and len(metrics) == 1 and "val_ce" in metrics:
+        legacy = [m for m in ("val_ce", "nmse", "r2") if m in contrib_tables]
+        if len(legacy) > 1:
+            metrics = legacy
     if not metrics:
         raise KeyError(
             f"None of {RANKING_METRICS[mode]} present in contributions "
@@ -102,9 +106,14 @@ def ranking_from_contributions(
     for m in metrics:
         table = contrib_tables[m]
 
-        def _key(name: str):
+        def _score(name: str) -> float:
             c = table.get(name, float("nan"))
-            c = float(c) if c is not None else float("nan")
+            if isinstance(c, Mapping):
+                c = c.get("mean", float("nan"))
+            return float(c) if c is not None else float("nan")
+
+        def _key(name: str):
+            c = _score(name)
             if math.isnan(c):
                 return (1, 0.0, name)  # NaN → worst
             return (0, -c, name)
@@ -112,8 +121,7 @@ def ranking_from_contributions(
         order = sorted(layers, key=_key)
         for rank, name in enumerate(order, 1):
             # Layers a metric never scored get the worst possible rank.
-            c = table.get(name, float("nan"))
-            c = float(c) if c is not None else float("nan")
+            c = _score(name)
             rank_sum[name] += rank if not math.isnan(c) else n
 
     return sorted(layers, key=lambda name: (rank_sum[name] / len(metrics), name))
@@ -168,7 +176,13 @@ def load_phase4_ranking(
         tables = json.loads(Path(contributions_path).read_text(encoding="utf-8"))
         ranking = ranking_from_contributions(tables, mode)
         if ranking:
-            return ranking, "phase4"
+            multiseed = any(
+                isinstance(value, Mapping)
+                for table in tables.values()
+                if isinstance(table, Mapping)
+                for value in table.values()
+            )
+            return ranking, "phase4_multiseed" if multiseed else "phase4"
     except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
         pass
     return list(FALLBACK_RANKINGS[mode]), "fallback"

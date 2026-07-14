@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -24,6 +25,8 @@ from data.finetune_dataset import (  # noqa: E402
     instantiate_expr,
     load_split_problems,
 )
+from data.splits import split_synthetic_train_validation  # noqa: E402
+from evaluation.aggregation import aggregate_prediction_scores, true_variables  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from training.selective_layers import (  # noqa: E402
@@ -31,15 +34,15 @@ from training.selective_layers import (  # noqa: E402
     load_phase4_ranking,
 )
 from training.single_layer import clone_model, train_selective  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
 DATA_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
 # Checkpoint/config env-overridable for GPU runs (e.g. LTSR_WEIGHTS=.../100M.ckpt)
 WEIGHTS = Path(os.environ.get("LTSR_WEIGHTS", str(ROOT / "NSRS" / "weights" / "10M.ckpt")))
 CONFIG = Path(os.environ.get("LTSR_CONFIG", str(ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml")))
 EQ_SETTING = Path(os.environ.get("LTSR_EQ_SETTING", str(ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json")))
-OUT_DIR = ROOT / "results" / "phase_results" / "phase5"
-REPORT = ROOT / "results" / "phase_results" / "phase5_report.md"
-PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4" / "contributions.json"
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase5", "phase5_report.md")
+PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4_multiseed" / "contrib_aggregate.json"
 
 
 def log(msg: str) -> None:
@@ -86,15 +89,6 @@ def eval_problems(model, params_fit, problems) -> Dict[str, Any]:
     import io
     import warnings
 
-    keys = [
-        "nmse",
-        "r2",
-        "var_f1",
-        "sym_recovery",
-        "complexity",
-        "valid_pred",
-    ]
-    buckets: Dict[str, List[float]] = {k: [] for k in keys}
     per: List[Dict[str, Any]] = []
 
     for ds in problems:
@@ -112,28 +106,11 @@ def eval_problems(model, params_fit, problems) -> Dict[str, Any]:
             expr = ""
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names)
         sc = score_prediction(
-            ds.y, y_hat, expr, ds.spec.variable_names, true_expr=true_expr
+            ds.y, y_hat, expr, true_variables(true_expr, ds.spec.variable_names),
+            true_expr=true_expr
         )
         per.append({"eq_id": ds.spec.eq_id, "pred": expr, "true": true_expr, **sc})
-        for k in keys:
-            v = sc[k]
-            if np.isfinite(v):
-                buckets[k].append(float(v))
-
-    agg: Dict[str, float] = {
-        "n_eval": float(len(problems)),
-        "n_valid": float(len(buckets["nmse"])),
-        "nmse": float(np.median(buckets["nmse"])) if buckets["nmse"] else float("inf"),
-        "r2": float(np.median(buckets["r2"])) if buckets["r2"] else float("-inf"),
-        "var_f1": float(np.mean(buckets["var_f1"])) if buckets["var_f1"] else float("nan"),
-        "sym_rate": float(np.mean(buckets["sym_recovery"]))
-        if buckets["sym_recovery"]
-        else 0.0,
-        "complexity": float(np.mean(buckets["complexity"]))
-        if buckets["complexity"]
-        else float("nan"),
-    }
-    return {"aggregate": agg, "per_problem": per}
+    return {"aggregate": aggregate_prediction_scores(per), "per_problem": per}
 
 
 def peak_mem_mb(device: torch.device) -> float:
@@ -167,6 +144,9 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-points", type=int, default=80)
     parser.add_argument("--eval-limit", type=int, default=0, help="0 = all test")
+    parser.add_argument("--validation-fraction", type=float, default=0.2)
+    parser.add_argument("--split-seed", type=int, default=1729)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--k", type=int, default=3, help="k for mid/random/bottom")
     parser.add_argument(
         "--ranking",
@@ -196,7 +176,7 @@ def main() -> int:
     log(f"Device: {device} | data: {data_dir}")
 
     ranking, ranking_source = load_phase4_ranking(Path(args.contributions), args.ranking)
-    if ranking_source == "phase4":
+    if ranking_source in ("phase4", "phase4_multiseed"):
         log(f"Ranking ({args.ranking}) from Phase 4 `{args.contributions}`: {ranking}")
     else:
         log(
@@ -215,24 +195,27 @@ def main() -> int:
         eq_setting = json.load(f)
     word2id = eq_setting["word2id"]
 
-    train_problems = load_split_problems(data_dir, "train")
+    all_train_problems = load_split_problems(data_dir, "train")
+    train_problems, validation_problems = split_synthetic_train_validation(
+        all_train_problems,
+        validation_fraction=args.validation_fraction,
+        seed=args.split_seed,
+    )
     test_problems = load_split_problems(data_dir, "test")
     if args.eval_limit > 0:
         test_problems = test_problems[: args.eval_limit]
 
-    train_ds = GRNFinetuneDataset(train_problems, word2id, max_points=args.max_points, seed=0)
-    val_ds = GRNFinetuneDataset(test_problems, word2id, max_points=args.max_points, seed=1)
-    log(f"Train FT: {len(train_ds)}; eval test: {len(test_problems)}")
+    train_ds = GRNFinetuneDataset(
+        train_problems, word2id, max_points=args.max_points, seed=args.seed
+    )
+    val_ds = GRNFinetuneDataset(
+        validation_problems, word2id, max_points=args.max_points, seed=args.seed + 1000
+    )
+    log(f"Train FT: {len(train_ds)}; validation: {len(validation_problems)}; test: {len(test_problems)}")
     if len(train_ds) == 0:
         log("No tokenizable train equations.")
         return 1
 
-    loader = DataLoader(
-        train_ds,
-        batch_size=min(args.batch_size, len(train_ds)),
-        shuffle=True,
-        collate_fn=collate_finetune,
-    )
     val_loader = DataLoader(
         val_ds,
         batch_size=min(args.batch_size, max(len(val_ds), 1)),
@@ -253,6 +236,18 @@ def main() -> int:
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+        random.seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(args.seed)
+        loader = DataLoader(
+            train_ds,
+            batch_size=min(args.batch_size, len(train_ds)),
+            shuffle=True,
+            collate_fn=collate_finetune,
+            generator=torch.Generator().manual_seed(args.seed),
+        )
         model = clone_model(base_model)
 
         if name == "pretrained" or layers == []:
@@ -324,7 +319,7 @@ def main() -> int:
         "# Phase 5: high-contribution selective fine-tuning",
         "",
         f"- Ranking mode: `{args.ranking}` "
-        f"({'Phase 4 contributions.json' if ranking_source == 'phase4' else 'FROZEN FALLBACK'})",
+        f"({ranking_source if ranking_source != 'fallback' else 'FROZEN FALLBACK'})",
         f"- Order: `{', '.join(ranking)}`",
         f"- k={args.k} for middle / random / bottom",
         f"- Train FT: {len(train_ds)}; test eval: {len(test_problems)}",
@@ -369,8 +364,8 @@ def main() -> int:
     if base and full:
         l_base = float(base["val_ce"])
         l_full = float(full["val_ce"])
-        n_base = float(base["eval"]["nmse"])
-        n_full = float(full["eval"]["nmse"])
+        n_base = float(base["eval"]["penalized_nmse"])
+        n_full = float(full["eval"]["penalized_nmse"])
         lines.extend(
             [
                 "",
@@ -387,7 +382,7 @@ def main() -> int:
             if r["condition"] in ("pretrained", "all_params"):
                 continue
             lk = float(r["val_ce"])
-            nk = float(r["eval"]["nmse"])
+            nk = float(r["eval"]["penalized_nmse"])
             c_ce = (
                 (l_base - lk) / (l_base - l_full) if abs(l_base - l_full) > 1e-12 else float("nan")
             )
@@ -402,7 +397,7 @@ def main() -> int:
     # Rank by val CE then NMSE
     ranked = sorted(
         [r for r in results if r["condition"] != "pretrained"],
-        key=lambda r: (r["val_ce"], r["eval"]["nmse"]),
+        key=lambda r: (r["val_ce"], r["eval"]["penalized_nmse"]),
     )
     lines.extend(
         [
@@ -422,7 +417,7 @@ def main() -> int:
     # --- H2 honest check: does the selected top-k actually beat the random control? ---
     def _cond_nmse(cname: str) -> float:
         r = by_name.get(cname)
-        return float(r["eval"]["nmse"]) if r else float("nan")
+        return float(r["eval"]["penalized_nmse"]) if r else float("nan")
 
     def _cond_ce(cname: str) -> float:
         r = by_name.get(cname)

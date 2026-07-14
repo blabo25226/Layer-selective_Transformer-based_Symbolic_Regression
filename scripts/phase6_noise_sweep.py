@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 import time
 from pathlib import Path
@@ -48,9 +49,9 @@ from phase6_tpsr_2x2 import (  # noqa: E402
     fmt,
     sanitize,
 )
+from experiment_runtime import phase_output_paths  # noqa: E402
 
-OUT_DIR = ROOT / "results" / "phase_results" / "phase6_noise"
-REPORT = ROOT / "results" / "phase_results" / "phase6_noise_report.md"
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase6_noise", "phase6_noise_report.md")
 
 
 def log(msg: str) -> None:
@@ -69,12 +70,20 @@ def run_level(
     if args.eval_limit > 0:
         test_problems = test_problems[: args.eval_limit]
 
-    train_ds = GRNFinetuneDataset(train_problems, word2id, max_points=args.max_points, seed=0)
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+    train_ds = GRNFinetuneDataset(
+        train_problems, word2id, max_points=args.max_points, seed=args.seed
+    )
     loader = DataLoader(
         train_ds,
         batch_size=min(args.batch_size, max(len(train_ds), 1)),
         shuffle=True,
         collate_fn=collate_finetune,
+        generator=torch.Generator().manual_seed(args.seed),
     )
     ft_model = clone_model(base_model)
     train_selective(ft_model, loader, layers, epochs=args.epochs, lr=args.lr, device=device)
@@ -87,6 +96,9 @@ def run_level(
     ]
     out: Dict[str, Dict[str, Any]] = {}
     for name, model, decode in cells:
+        torch.manual_seed(args.seed + 10_000)
+        np.random.seed(args.seed + 10_000)
+        random.seed(args.seed + 10_000)
         model.eval()
         ev = eval_one(
             model,
@@ -109,6 +121,7 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-points", type=int, default=80)
     parser.add_argument("--eval-limit", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
     parser.add_argument("--bfgs-stop-time", type=float, default=0.5)
@@ -175,14 +188,14 @@ def main() -> int:
         f"- Noise levels: {noises}  |  epochs: {args.epochs}, TPSR rollout={args.rollout}",
         f"- Device: `{device}`",
         "",
-        "## NMSE (median, lower better) vs noise",
+        "## Failure-penalized NMSE (median, lower better) vs noise",
         "",
         "| noise | " + " | ".join(cells) + " |",
         "|-------|" + "|".join(["------"] * len(cells)) + "|",
     ]
     for nz in noises:
         lines.append(
-            f"| {nz} | " + " | ".join(fmt(cell(nz, c, "nmse")) for c in cells) + " |"
+            f"| {nz} | " + " | ".join(fmt(cell(nz, c, "penalized_nmse")) for c in cells) + " |"
         )
     lines += ["", "## R² (median, higher better) vs noise", "",
               "| noise | " + " | ".join(cells) + " |",
@@ -196,9 +209,9 @@ def main() -> int:
     lines += ["", "## H3 check: robustness slope", ""]
     if len(noises) >= 2:
         lo, hi = noises[0], noises[-1]
-        deg_stpsr = cell(hi, "selective_tpsr", "nmse") - cell(lo, "selective_tpsr", "nmse")
-        deg_sbeam = cell(hi, "selective_beam", "nmse") - cell(lo, "selective_beam", "nmse")
-        deg_pbeam = cell(hi, "pretrained_beam", "nmse") - cell(lo, "pretrained_beam", "nmse")
+        deg_stpsr = cell(hi, "selective_tpsr", "penalized_nmse") - cell(lo, "selective_tpsr", "penalized_nmse")
+        deg_sbeam = cell(hi, "selective_beam", "penalized_nmse") - cell(lo, "selective_beam", "penalized_nmse")
+        deg_pbeam = cell(hi, "pretrained_beam", "penalized_nmse") - cell(lo, "pretrained_beam", "penalized_nmse")
         lines += [
             f"- ΔNMSE({lo}→{hi}) selective_tpsr = {fmt(deg_stpsr)}",
             f"- ΔNMSE({lo}→{hi}) selective_beam = {fmt(deg_sbeam)}",

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+
+import pytest
+
+if sys.version_info >= (3, 12):
+    pytest.skip("NeSymReS/Hydra 1.0 requires Python 3.10 or 3.11", allow_module_level=True)
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]

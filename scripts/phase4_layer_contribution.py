@@ -24,6 +24,11 @@ from data.finetune_dataset import (  # noqa: E402
     instantiate_expr,
     load_split_problems,
 )
+from data.splits import split_synthetic_train_validation  # noqa: E402
+from evaluation.aggregation import (  # noqa: E402
+    aggregate_prediction_scores,
+    true_variables,
+)
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from evaluation.layer_contribution import (  # noqa: E402
     compute_contributions,
@@ -32,14 +37,14 @@ from evaluation.layer_contribution import (  # noqa: E402
 from models.layer_selector import get_layer_registry  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
 DATA_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
 # Checkpoint/config env-overridable for GPU runs (e.g. LTSR_WEIGHTS=.../100M.ckpt)
 WEIGHTS = Path(os.environ.get("LTSR_WEIGHTS", str(ROOT / "NSRS" / "weights" / "10M.ckpt")))
 CONFIG = Path(os.environ.get("LTSR_CONFIG", str(ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml")))
 EQ_SETTING = Path(os.environ.get("LTSR_EQ_SETTING", str(ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json")))
-OUT_DIR = ROOT / "results" / "phase_results" / "phase4"
-REPORT = ROOT / "results" / "phase_results" / "phase4_report.md"
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase4", "phase4_report.md")
 
 
 def build_phase4_conditions(model) -> Dict[str, Optional[List[str]]]:
@@ -103,20 +108,6 @@ def eval_problems(
     import warnings
 
     per: List[Dict[str, Any]] = []
-    keys = [
-        "nmse",
-        "nmse_var",
-        "r2",
-        "var_f1",
-        "var_precision",
-        "var_recall",
-        "sym_recovery",
-        "sym_skeleton",
-        "complexity",
-        "valid_pred",
-    ]
-    buckets: Dict[str, List[float]] = {k: [] for k in keys}
-
     for ds in problems:
         true_expr = instantiate_expr(ds)
         expr = ""
@@ -132,32 +123,12 @@ def eval_problems(
             expr = ""
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names)
         sc = score_prediction(
-            ds.y, y_hat, expr, ds.spec.variable_names, true_expr=true_expr
+            ds.y, y_hat, expr, true_variables(true_expr, ds.spec.variable_names),
+            true_expr=true_expr
         )
         row = {"eq_id": ds.spec.eq_id, "pred": expr, "true": true_expr, **sc}
         per.append(row)
-        for k in keys:
-            v = sc[k]
-            if np.isfinite(v):
-                buckets[k].append(float(v))
-
-    agg: Dict[str, float] = {
-        "n_eval": float(len(problems)),
-        "n_valid": float(len(buckets["nmse"])),
-    }
-    for k, vals in buckets.items():
-        if not vals:
-            agg[f"{k}_mean"] = float("nan")
-            agg[f"{k}_median"] = float("nan")
-            continue
-        agg[f"{k}_mean"] = float(np.mean(vals))
-        agg[f"{k}_median"] = float(np.median(vals))
-    # rates: mean of binary / continuous recovery metrics
-    agg["sym_rate"] = agg.get("sym_recovery_mean", float("nan"))
-    agg["var_f1"] = agg.get("var_f1_mean", float("nan"))
-    agg["r2"] = agg.get("r2_median", float("nan"))
-    agg["nmse"] = agg.get("nmse_median", float("nan"))
-    return {"aggregate": agg, "per_problem": per}
+    return {"aggregate": aggregate_prediction_scores(per), "per_problem": per}
 
 
 def fmt(x: float, digits: int = 4) -> str:
@@ -173,6 +144,8 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-points", type=int, default=80)
     parser.add_argument("--eval-limit", type=int, default=0, help="0 = all test problems")
+    parser.add_argument("--validation-fraction", type=float, default=0.2)
+    parser.add_argument("--split-seed", type=int, default=1729)
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
     parser.add_argument(
@@ -206,19 +179,23 @@ def main() -> int:
         eq_setting = json.load(f)
     word2id = eq_setting["word2id"]
 
-    train_problems = load_split_problems(data_dir, "train")
-    test_problems = load_split_problems(data_dir, "test")
+    all_train_problems = load_split_problems(data_dir, "train")
+    train_problems, validation_problems = split_synthetic_train_validation(
+        all_train_problems,
+        validation_fraction=args.validation_fraction,
+        seed=args.split_seed,
+    )
     if args.eval_limit > 0:
-        test_problems = test_problems[: args.eval_limit]
+        validation_problems = validation_problems[: args.eval_limit]
 
     train_ds = GRNFinetuneDataset(
         train_problems, word2id, max_points=args.max_points, seed=0
     )
     val_ds = GRNFinetuneDataset(
-        test_problems, word2id, max_points=args.max_points, seed=1
+        validation_problems, word2id, max_points=args.max_points, seed=1
     )
     log(f"Train FT examples: {len(train_ds)} / {len(train_problems)}")
-    log(f"Eval problems: {len(test_problems)}; val CE examples: {len(val_ds)}")
+    log(f"Validation problems: {len(validation_problems)}; val CE examples: {len(val_ds)}")
     if len(train_ds) == 0:
         log("No tokenizable train equations.")
         return 1
@@ -269,7 +246,7 @@ def main() -> int:
 
         model.eval()
         val_ce = eval_ce_loss(model, val_loader, device) if len(val_ds) else float("nan")
-        decoded = eval_problems(model, fit_eval, test_problems)
+        decoded = eval_problems(model, fit_eval, validation_problems)
         agg = decoded["aggregate"]
         agg["val_ce"] = val_ce
         elapsed = time.time() - t0
@@ -311,8 +288,8 @@ def main() -> int:
     # Build metric score maps
     metric_specs = [
         ("val_ce", False, "Cross-entropy (token teacher-forcing)"),
-        ("nmse", False, "Prediction NMSE (median, lower better)"),
-        ("r2", True, "Prediction R² (median, higher better)"),
+        ("penalized_nmse", False, "Failure-penalized prediction NMSE"),
+        ("penalized_r2", True, "Failure-penalized prediction R²"),
         ("var_f1", True, "Variable recovery F1 (mean)"),
         ("sym_rate", True, "Symbolic recovery rate (mean)"),
     ]
@@ -341,7 +318,8 @@ def main() -> int:
         "# Phase 4: layer contribution",
         "",
         f"- Train FT examples: {len(train_ds)} (Phase 1 train)",
-        f"- Eval problems: {len(test_problems)} test",
+        f"- Validation problems: {len(validation_problems)} (held out by motif from training)",
+        "- Test split is not used in Phase 4 layer selection.",
         f"- Epochs: {args.epochs}, lr: {args.lr}",
         f"- Decode: beam={args.beam_size}, BFGS restarts={args.bfgs_restarts}, "
         f"stop_time={args.bfgs_stop_time}s",
