@@ -54,6 +54,8 @@ def instantiate_expr(ds: SampledDataset) -> str:
             "dream4 problems have no closed-form teacher equation; "
             "fine-tune on synthetic data and transfer-evaluate"
         )
+    if fam == "dream4_sbml":
+        return ds.spec.motif
     raise ValueError(fam)
 
 
