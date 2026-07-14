@@ -1,0 +1,29 @@
+{
+  "nesymres_beam2": {
+    "n": 9,
+    "valid_rate": 1.0,
+    "nmse_id_median": 0.3758449133543021,
+    "nmse_ood_median": 0.901448166454687,
+    "r2_id_median": 0.6018758728439145,
+    "var_f1_mean": 1.0,
+    "elapsed_mean": 20.00167857276069
+  },
+  "nesymres_beam5": {
+    "n": 9,
+    "valid_rate": 1.0,
+    "nmse_id_median": 0.1202941820987475,
+    "nmse_ood_median": 0.18737865035080253,
+    "r2_id_median": 0.8056499938931074,
+    "var_f1_mean": 1.0,
+    "elapsed_mean": 55.93430254194472
+  },
+  "pysr": {
+    "n": 9,
+    "valid_rate": 1.0,
+    "nmse_id_median": 0.0007227643973898191,
+    "nmse_ood_median": 0.32747931276509384,
+    "r2_id_median": 0.9989679043910645,
+    "var_f1_mean": 0.9333333333333333,
+    "elapsed_mean": 15.327872541215685
+  }
+}

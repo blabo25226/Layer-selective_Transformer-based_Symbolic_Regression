@@ -1,0 +1,4 @@
+# Phase 2 baseline evaluation defaults
+split: test
+pysr_iters: 20
+beam_sizes: [2, 5]
