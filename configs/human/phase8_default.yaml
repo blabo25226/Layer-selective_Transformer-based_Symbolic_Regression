@@ -1,0 +1,18 @@
+# Phase 8: human LPS macrophage panel (GSE112372)
+source: GSE112372
+data_dir: data/human/gse112372_lps
+derivative: smooth_fd
+k_regulators: 2
+max_vars: 3
+selection_methods:
+  - prior
+  - prior_corr
+  - corr
+  - mi
+holdout_donor: "11"
+pysr_iters: 12
+selective_epochs: 5
+layers:
+  - decoder_0
+  - decoder_4
+  - encoder_0
