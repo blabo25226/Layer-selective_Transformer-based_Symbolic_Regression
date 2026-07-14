@@ -42,9 +42,18 @@ def instantiate_expr(ds: SampledDataset) -> str:
         return f"({p['alpha']})/(1+x_{ri}**({p['n']}))-({p['beta']})*x_{ti}"
     if fam == "dreamlike":
         # Numeric expression stored in motif at problem build time
-        if ds.spec.motif and ("x_" in ds.spec.motif or ds.spec.motif[0].isdigit() or ds.spec.motif.startswith("(")):
+        if ds.spec.motif and (
+            "x_" in ds.spec.motif
+            or ds.spec.motif[0].isdigit()
+            or ds.spec.motif.startswith("(")
+        ):
             return ds.spec.motif
         return ds.spec.target_expr
+    if fam == "dream4":
+        raise ValueError(
+            "dream4 problems have no closed-form teacher equation; "
+            "fine-tune on synthetic data and transfer-evaluate"
+        )
     raise ValueError(fam)
 
 
