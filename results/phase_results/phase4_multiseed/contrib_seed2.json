@@ -1,0 +1,72 @@
+{
+  "val_ce": {
+    "output_head": 0.09040332335819845,
+    "encoder_0": 0.10018759336013582,
+    "encoder_1": 0.2279674969415086,
+    "encoder_2": 0.3149353786729225,
+    "encoder_3": 0.30701609514623673,
+    "encoder_4": 0.21235784155104434,
+    "encoder_5": 0.20826393186634903,
+    "decoder_0": 0.17699149439849438,
+    "decoder_1": 0.4058654260007874,
+    "decoder_2": 0.5965772974208287,
+    "decoder_3": 0.7387595177295648,
+    "decoder_4": 0.7702544941817286
+  },
+  "nmse": {
+    "output_head": -0.16607163879281928,
+    "encoder_0": 0.42959301216715834,
+    "encoder_1": 0.654097074578392,
+    "encoder_2": 0.5339212712862887,
+    "encoder_3": 0.6537513759622697,
+    "encoder_4": 0.6206816982766055,
+    "encoder_5": 0.6206816982766633,
+    "decoder_0": -0.38743858190230107,
+    "decoder_1": -0.020085231026049193,
+    "decoder_2": 0.6191906633752203,
+    "decoder_3": 0.6191906633750935,
+    "decoder_4": 0.32794010297971754
+  },
+  "r2": {
+    "output_head": -0.39460646741642164,
+    "encoder_0": 0.01480553098810938,
+    "encoder_1": 0.5927074242499788,
+    "encoder_2": 0.45863530402251274,
+    "encoder_3": 0.7070211893181131,
+    "encoder_4": 0.6864196624963351,
+    "encoder_5": 0.6864196624963433,
+    "decoder_0": -0.3261936474300501,
+    "decoder_1": -0.014267162348584512,
+    "decoder_2": 0.5931579609991569,
+    "decoder_3": 0.6459984896985511,
+    "decoder_4": 0.49720748395825864
+  },
+  "var_f1": {
+    "output_head": null,
+    "encoder_0": null,
+    "encoder_1": null,
+    "encoder_2": null,
+    "encoder_3": null,
+    "encoder_4": null,
+    "encoder_5": null,
+    "decoder_0": null,
+    "decoder_1": null,
+    "decoder_2": null,
+    "decoder_3": null,
+    "decoder_4": null
+  },
+  "sym_rate": {
+    "output_head": null,
+    "encoder_0": null,
+    "encoder_1": null,
+    "encoder_2": null,
+    "encoder_3": null,
+    "encoder_4": null,
+    "encoder_5": null,
+    "decoder_0": null,
+    "decoder_1": null,
+    "decoder_2": null,
+    "decoder_3": null,
+    "decoder_4": null
+  }
+}

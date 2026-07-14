@@ -1,0 +1,72 @@
+{
+  "val_ce": {
+    "output_head": 0.10068859571139006,
+    "encoder_0": 0.1012939795882081,
+    "encoder_1": 0.26937207069449876,
+    "encoder_2": 0.31435738416130293,
+    "encoder_3": 0.30750129796237685,
+    "encoder_4": 0.20510195227765726,
+    "encoder_5": 0.21491725045339782,
+    "decoder_0": 0.18226777141637923,
+    "decoder_1": 0.4232813911311831,
+    "decoder_2": 0.6333086305607909,
+    "decoder_3": 0.8389975463176985,
+    "decoder_4": 0.8522147149816863
+  },
+  "nmse": {
+    "output_head": 0.0537553042675744,
+    "encoder_0": 0.024447780013607378,
+    "encoder_1": 0.6779063522581785,
+    "encoder_2": 0.5089076204047107,
+    "encoder_3": 0.6625255957615437,
+    "encoder_4": 0.6290120795383181,
+    "encoder_5": 0.6290120795367148,
+    "decoder_0": -0.43189758980662335,
+    "decoder_1": 0.3866133336086649,
+    "decoder_2": 0.49139196949833935,
+    "decoder_3": 0.659680626171731,
+    "decoder_4": 0.26519711238919935
+  },
+  "r2": {
+    "output_head": 0.24696468698256369,
+    "encoder_0": 0.11205755731771805,
+    "encoder_1": 0.5315519928568853,
+    "encoder_2": 0.5882408442783813,
+    "encoder_3": 0.7258094975402752,
+    "encoder_4": 0.7050139698539561,
+    "encoder_5": 0.7050139698555747,
+    "decoder_0": -0.6718890594452172,
+    "decoder_1": 0.30977444764851625,
+    "decoder_2": 0.585353815316618,
+    "decoder_3": 0.7166903728348438,
+    "decoder_4": 0.46255096509856947
+  },
+  "var_f1": {
+    "output_head": null,
+    "encoder_0": null,
+    "encoder_1": null,
+    "encoder_2": null,
+    "encoder_3": null,
+    "encoder_4": null,
+    "encoder_5": null,
+    "decoder_0": null,
+    "decoder_1": null,
+    "decoder_2": null,
+    "decoder_3": null,
+    "decoder_4": null
+  },
+  "sym_rate": {
+    "output_head": null,
+    "encoder_0": null,
+    "encoder_1": null,
+    "encoder_2": null,
+    "encoder_3": null,
+    "encoder_4": null,
+    "encoder_5": null,
+    "decoder_0": null,
+    "decoder_1": null,
+    "decoder_2": null,
+    "decoder_3": null,
+    "decoder_4": null
+  }
+}
