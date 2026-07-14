@@ -53,7 +53,16 @@ CONFIG = ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml"
 EQ_SETTING = ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json"
 OUT_DIR = ROOT / "results" / "phase_results" / "phase8"
 REPORT = ROOT / "results" / "phase_results" / "phase8_report.md"
-HIGH_CONTRIB = ["decoder_0", "decoder_4", "encoder_0"]
+
+from training.selective_layers import resolve_selected_layers  # noqa: E402
+
+# High-contribution layer set = top-k of the Phase 4 accuracy ranking (principled
+# a-priori; NOT the earlier post-hoc middle_3). Falls back to the frozen ranking
+# if contributions.json is absent.
+_PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4" / "contributions.json"
+HIGH_CONTRIB, _HC_SOURCE, _HC_RULE = resolve_selected_layers(
+    _PHASE4_CONTRIB, mode="accuracy", rule="top", k=3
+)
 
 
 def log(msg: str) -> None:

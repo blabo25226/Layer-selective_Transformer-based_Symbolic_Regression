@@ -26,6 +26,7 @@ from data.finetune_dataset import (  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from models.tpsr_adapter import predict_equation_tpsr  # noqa: E402
+from training.selective_layers import resolve_selected_layers  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
 
 DATA_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
@@ -35,8 +36,7 @@ EQ_SETTING = ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json"
 OUT_DIR = ROOT / "results" / "phase_results" / "phase6"
 REPORT = ROOT / "results" / "phase_results" / "phase6_report.md"
 
-# Phase 5 best selective set (accuracy-ranking middle_3)
-HIGH_CONTRIB_LAYERS = ["decoder_0", "decoder_4", "encoder_0"]
+PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4" / "contributions.json"
 
 
 def log(msg: str) -> None:
@@ -183,15 +183,26 @@ def main() -> int:
     parser.add_argument("--num-beams", type=int, default=1)
     parser.add_argument(
         "--layers",
-        default=",".join(HIGH_CONTRIB_LAYERS),
-        help="Comma-separated high-contrib layer names",
+        default="",
+        help="Explicit comma layer set (overrides the Phase 4 top-k rule)",
     )
+    parser.add_argument("--layer-rule", choices=["top", "middle", "bottom"], default="top")
+    parser.add_argument("--layer-mode", choices=["accuracy", "ce"], default="accuracy")
+    parser.add_argument("--layer-k", type=int, default=3)
+    parser.add_argument("--contributions", default=str(PHASE4_CONTRIB))
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    layers = [x.strip() for x in args.layers.split(",") if x.strip()]
+    explicit = [x.strip() for x in args.layers.split(",") if x.strip()] or None
+    layers, layer_src, layer_rule = resolve_selected_layers(
+        Path(args.contributions),
+        mode=args.layer_mode,
+        rule=args.layer_rule,
+        k=args.layer_k,
+        explicit=explicit,
+    )
     log(f"Device: {device}")
-    log(f"High-contrib layers: {layers}")
+    log(f"High-contrib layers ({layer_rule}, source={layer_src}): {layers}")
 
     base_model, params_fit = load_nesymres(
         WEIGHTS, CONFIG, EQ_SETTING, beam_size=args.beam_size
@@ -295,7 +306,7 @@ def main() -> int:
     lines = [
         "# Phase 6: TPSR 2×2 (fine-tune × decode)",
         "",
-        f"- High-contrib layers (Phase 5 `middle_3`): `{', '.join(layers)}`",
+        f"- High-contrib layers ({layer_rule}, source=`{layer_src}`): `{', '.join(layers)}`",
         f"- Train FT examples: {len(train_ds)}; eval test: {len(test_problems)}",
         f"- Epochs: {args.epochs}, lr: {args.lr}",
         f"- Beam BFGS: beam={args.beam_size}, restarts={args.bfgs_restarts}, "

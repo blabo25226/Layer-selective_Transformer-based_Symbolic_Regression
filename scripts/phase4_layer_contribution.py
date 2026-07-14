@@ -184,10 +184,16 @@ def main() -> int:
         default="",
         help="Comma-separated subset (empty = Phase-4 default set)",
     )
+    parser.add_argument(
+        "--data-dir",
+        default=str(DATA_DIR),
+        help="Suite dir (default phase1_v1; use diverse_v1 for A-1 sample size)",
+    )
     args = parser.parse_args()
 
+    data_dir = Path(args.data_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log(f"Device: {device}")
+    log(f"Device: {device} | data: {data_dir}")
 
     base_model, params_fit = load_nesymres(WEIGHTS, CONFIG, EQ_SETTING, beam_size=args.beam_size)
     fit_eval = make_eval_fit_params(
@@ -198,8 +204,8 @@ def main() -> int:
         eq_setting = json.load(f)
     word2id = eq_setting["word2id"]
 
-    train_problems = load_split_problems(DATA_DIR, "train")
-    test_problems = load_split_problems(DATA_DIR, "test")
+    train_problems = load_split_problems(data_dir, "train")
+    test_problems = load_split_problems(data_dir, "test")
     if args.eval_limit > 0:
         test_problems = test_problems[: args.eval_limit]
 

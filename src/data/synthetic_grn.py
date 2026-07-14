@@ -347,6 +347,149 @@ def build_phase1_suite(
     return datasets
 
 
+def _evaluate_expr_on_X(expr: str, X: np.ndarray) -> np.ndarray:
+    """Evaluate a numeric x_1..x_n expression on rows of X via sympy lambdify."""
+    from sympy import lambdify, symbols, sympify
+
+    n_vars = X.shape[1]
+    syms = symbols(" ".join(f"x_{i+1}" for i in range(max(n_vars, 1))))
+    if not isinstance(syms, (list, tuple)):
+        syms = (syms,)
+    fn = lambdify(syms, sympify(expr), modules=["numpy"])
+    cols = [X[:, i] for i in range(n_vars)]
+    out = np.asarray(fn(*cols), dtype=float)
+    return np.broadcast_to(out, (X.shape[0],)).astype(np.float32)
+
+
+def make_expr_problem(
+    eq_id: str,
+    expr: str,
+    n_vars: int,
+    skeleton: str,
+    split: str,
+    n_points: int,
+    support: Tuple[float, float],
+    noise_std: float,
+    rng: np.random.Generator,
+) -> SampledDataset:
+    """Build one SR problem from a concrete numeric x_1..x_n expression string.
+
+    The numeric expression is stored in ``motif`` so the existing dreamlike
+    plumbing (``finetune_dataset.instantiate_expr``) returns it as the teacher.
+    """
+    X = _sample_box(n_points, [support[0]] * n_vars, [support[1]] * n_vars, rng)
+    y = _evaluate_expr_on_X(expr, X)
+    y = add_gaussian_noise(y, noise_std, rng)
+    return SampledDataset(
+        spec=EquationSpec(
+            eq_id=eq_id,
+            family="dreamlike",  # reuse dreamlike teacher path (motif = numeric expr)
+            target_expr=expr,
+            variable_names=[f"x_{i+1}" for i in range(n_vars)],
+            parameters={"skeleton": 0.0},
+            split=split,
+            motif=expr,
+        ),
+        X=X,
+        y=y,
+        noise_std=noise_std,
+    )
+
+
+def _r(rng: np.random.Generator, lo: float, hi: float) -> float:
+    return round(float(rng.uniform(lo, hi)), 3)
+
+
+# Skeleton templates: name -> (n_vars, builder(rng) -> numeric expr string).
+# Split is by STRUCTURE — TRAIN and TEST skeletons are disjoint, so the model is
+# evaluated on functional forms it never saw during fine-tuning (plan §Phase 1,
+# reviewer note A-1: many distinct skeletons, not 4).
+def _diverse_skeletons() -> Dict[str, Dict[str, "Tuple[int, Callable]"]]:
+    def hill_act(n):
+        return lambda g: (
+            2,
+            f"{_r(g,0.5,2.5)}*x_2**{n}/({_r(g,0.3,1.8)}+x_2**{n})-{_r(g,0.2,0.8)}*x_1",
+        )
+
+    def hill_rep(n):
+        return lambda g: (
+            2,
+            f"{_r(g,0.5,2.5)}*{_r(g,0.5,2.0)}/({_r(g,0.3,1.8)}+x_2**{n})-{_r(g,0.2,0.8)}*x_1",
+        )
+
+    train = {
+        "hill_act_n2": hill_act(2),
+        "hill_act_n3": hill_act(3),
+        "hill_rep_n2": hill_rep(2),
+        "toggle_n2": lambda g: (2, f"{_r(g,0.5,2.5)}/(1+x_2**2)-{_r(g,0.2,0.8)}*x_1"),
+        "linear2": lambda g: (2, f"{_r(g,0.3,2.0)}*x_2-{_r(g,0.2,0.9)}*x_1"),
+        "mass_action": lambda g: (3, f"{_r(g,0.3,1.5)}*x_2*x_3-{_r(g,0.2,0.8)}*x_1"),
+        "michaelis": lambda g: (2, f"{_r(g,0.5,2.5)}*x_2/({_r(g,0.3,1.8)}+x_2)-{_r(g,0.2,0.8)}*x_1"),
+        "self_act_n2": lambda g: (
+            1,
+            f"{_r(g,0.5,2.5)}*x_1**2/({_r(g,0.3,1.8)}+x_1**2)-{_r(g,0.2,0.8)}*x_1",
+        ),
+        "additive_act": lambda g: (
+            3,
+            f"{_r(g,0.4,1.6)}*x_2**2/({_r(g,0.3,1.5)}+x_2**2)"
+            f"+{_r(g,0.4,1.6)}*x_3**2/({_r(g,0.3,1.5)}+x_3**2)-{_r(g,0.2,0.8)}*x_1",
+        ),
+        "sqrt_sat": lambda g: (2, f"{_r(g,0.5,2.0)}*sqrt(x_2)-{_r(g,0.2,0.8)}*x_1"),
+    }
+    test = {
+        "hill_act_n4": hill_act(4),
+        "hill_rep_n3": hill_rep(3),
+        "product_hill": lambda g: (
+            3,
+            f"{_r(g,0.5,2.0)}*x_2**2*x_3/({_r(g,0.3,1.5)}+x_2**2)-{_r(g,0.2,0.8)}*x_1",
+        ),
+        "ratio_xy": lambda g: (3, f"{_r(g,0.5,2.0)}*x_2/({_r(g,0.5,2.0)}+x_3)-{_r(g,0.2,0.8)}*x_1"),
+        "sum_linear3": lambda g: (
+            3,
+            f"{_r(g,0.3,1.5)}*x_2+{_r(g,0.3,1.5)}*x_3-{_r(g,0.2,0.9)}*x_1",
+        ),
+    }
+    return {"train": train, "test": test}
+
+
+def build_diverse_suite(
+    n_per_skeleton: int = 8,
+    n_points: int = 200,
+    support: Tuple[float, float] = (0.1, 3.0),
+    noise_std: float = 0.0,
+    seed: int = 0,
+) -> List[SampledDataset]:
+    """Structure-split suite with many distinct skeletons (reviewer note A-1).
+
+    TRAIN and TEST use **disjoint** functional forms; within each skeleton,
+    ``n_per_skeleton`` random parameterizations are drawn. With defaults this is
+    ~11 train skeletons × 8 = 88 train and 5 test skeletons × 8 = 40 test problems.
+    """
+    rng = np.random.default_rng(seed)
+    skels = _diverse_skeletons()
+    datasets: List[SampledDataset] = []
+    counter = 0
+    for split in ("train", "test"):
+        for sk_name, builder in skels[split].items():
+            for j in range(n_per_skeleton):
+                counter += 1
+                n_vars, expr = builder(rng)
+                datasets.append(
+                    make_expr_problem(
+                        f"{sk_name}_{split}_{j}",
+                        expr,
+                        n_vars,
+                        sk_name,
+                        split,
+                        n_points,
+                        support,
+                        noise_std,
+                        rng,
+                    )
+                )
+    return datasets
+
+
 def save_suite(datasets: List[SampledDataset], out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     index = []

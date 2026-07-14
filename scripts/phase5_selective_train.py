@@ -26,9 +26,8 @@ from data.finetune_dataset import (  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from training.selective_layers import (  # noqa: E402
-    PHASE4_ACCURACY_RANKING,
-    PHASE4_CE_RANKING,
     build_phase5_conditions,
+    load_phase4_ranking,
 )
 from training.single_layer import clone_model, train_selective  # noqa: E402
 
@@ -38,6 +37,7 @@ CONFIG = ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml"
 EQ_SETTING = ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json"
 OUT_DIR = ROOT / "results" / "phase_results" / "phase5"
 REPORT = ROOT / "results" / "phase_results" / "phase5_report.md"
+PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4" / "contributions.json"
 
 
 def log(msg: str) -> None:
@@ -172,17 +172,37 @@ def main() -> int:
         default="accuracy",
         help="Layer order for top/mid/bottom (Phase 4)",
     )
+    parser.add_argument(
+        "--contributions",
+        default=str(PHASE4_CONTRIB),
+        help="Phase 4 contributions.json to derive the ranking from "
+        "(falls back to frozen constant if missing)",
+    )
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
     parser.add_argument("--bfgs-stop-time", type=float, default=0.5)
     parser.add_argument("--conditions", default="", help="Comma subset (empty=all)")
+    parser.add_argument(
+        "--data-dir",
+        default=str(DATA_DIR),
+        help="Suite dir (default phase1_v1; use diverse_v1 for A-1 sample size)",
+    )
     args = parser.parse_args()
 
+    data_dir = Path(args.data_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log(f"Device: {device}")
+    log(f"Device: {device} | data: {data_dir}")
 
-    ranking = PHASE4_ACCURACY_RANKING if args.ranking == "accuracy" else PHASE4_CE_RANKING
-    log(f"Ranking ({args.ranking}): {ranking}")
+    ranking, ranking_source = load_phase4_ranking(Path(args.contributions), args.ranking)
+    if ranking_source == "phase4":
+        log(f"Ranking ({args.ranking}) from Phase 4 `{args.contributions}`: {ranking}")
+    else:
+        log(
+            f"WARNING: Phase 4 contributions not found/invalid at "
+            f"`{args.contributions}`; using frozen fallback ranking ({args.ranking}). "
+            f"Run scripts/phase4_layer_contribution.py first for live rankings."
+        )
+        log(f"Ranking ({args.ranking}, fallback): {ranking}")
 
     base_model, params_fit = load_nesymres(WEIGHTS, CONFIG, EQ_SETTING, beam_size=args.beam_size)
     fit_eval = make_eval_fit_params(
@@ -193,8 +213,8 @@ def main() -> int:
         eq_setting = json.load(f)
     word2id = eq_setting["word2id"]
 
-    train_problems = load_split_problems(DATA_DIR, "train")
-    test_problems = load_split_problems(DATA_DIR, "test")
+    train_problems = load_split_problems(data_dir, "train")
+    test_problems = load_split_problems(data_dir, "test")
     if args.eval_limit > 0:
         test_problems = test_problems[: args.eval_limit]
 
@@ -301,7 +321,8 @@ def main() -> int:
     lines = [
         "# Phase 5: high-contribution selective fine-tuning",
         "",
-        f"- Ranking source: Phase 4 `{args.ranking}`",
+        f"- Ranking mode: `{args.ranking}` "
+        f"({'Phase 4 contributions.json' if ranking_source == 'phase4' else 'FROZEN FALLBACK'})",
         f"- Order: `{', '.join(ranking)}`",
         f"- k={args.k} for middle / random / bottom",
         f"- Train FT: {len(train_ds)}; test eval: {len(test_problems)}",
@@ -396,15 +417,53 @@ def main() -> int:
             f"{fmt(r['eval']['nmse'])} | {int(r['train']['trainable']):,} |"
         )
 
+    # --- H2 honest check: does the selected top-k actually beat the random control? ---
+    def _cond_nmse(cname: str) -> float:
+        r = by_name.get(cname)
+        return float(r["eval"]["nmse"]) if r else float("nan")
+
+    def _cond_ce(cname: str) -> float:
+        r = by_name.get(cname)
+        return float(r["val_ce"]) if r else float("nan")
+
+    top_name = f"top_{args.k}"
+    rand_name = f"random_{args.k}"
+    mid_name = f"middle_{args.k}"
+    top_nmse, rand_nmse = _cond_nmse(top_name), _cond_nmse(rand_name)
+    top_ce, rand_ce = _cond_ce(top_name), _cond_ce(rand_name)
     lines.extend(
         [
+            "",
+            "## H2 check: selected layers vs random control",
+            "",
+            f"- `{top_name}` NMSE={fmt(top_nmse)}, val CE={fmt(top_ce)}",
+            f"- `{rand_name}` NMSE={fmt(rand_nmse)}, val CE={fmt(rand_ce)} "
+            "(random now excludes the top-3 layers — A-3 fix)",
+            f"- `{mid_name}` NMSE={fmt(_cond_nmse(mid_name))}, val CE={fmt(_cond_ce(mid_name))}",
+            "",
+            (
+                f"**Verdict:** top-k {'beats' if (np.isfinite(top_nmse) and np.isfinite(rand_nmse) and top_nmse < rand_nmse) else 'does NOT beat'} "
+                "the random control on prediction NMSE"
+                + (
+                    f" (Δ={fmt(rand_nmse - top_nmse)})."
+                    if np.isfinite(top_nmse) and np.isfinite(rand_nmse)
+                    else "."
+                )
+            ),
+            "",
+            "> ⚠️ **Statistical caveat (A-1):** this run uses a small train/eval set "
+            f"({len(train_ds)} train / {len(test_problems)} eval equations, single seed). "
+            "A top≈random gap of this size is NOT evidence for H2. Re-run "
+            "`scripts/phase4_multiseed.py` + this script across ≥3 seeds and compare "
+            "distributions (mean ± CI) before claiming layer selectivity.",
             "",
             "## Notes",
             "",
             "- Transfer proxy: Phase 1 train/test split uses OOD parameter ranges "
             "(same equation families).",
             "- Overfit gap = val_CE − train_CE (larger → more overfit).",
-            "- `random_k` seed=0 for reproducibility.",
+            "- Layer order derived from Phase 4 `contributions.json` (mode "
+            f"`{args.ranking}`); `random_k` seed=0 excludes top-3 for a fair control.",
             "- Light BFGS decode; raise flags for paper-quality decode metrics.",
             "",
         ]
