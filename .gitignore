@@ -1,3 +1,16 @@
-docs/
-weights/
-data/
+/docs/
+/weights/
+/data/
+**/weights/
+
+# Python/build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Local experiment artifacts
+results/runs/
+results/synthetic/_test_tmp/
+.claude/
