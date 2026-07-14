@@ -34,6 +34,7 @@ from data.dreamlike_grn import (  # noqa: E402
 from data.finetune_dataset import GRNFinetuneDataset, collate_finetune  # noqa: E402
 from data.regulator_selection import oracle_regulators  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.aggregation import aggregate_prediction_scores  # noqa: E402
 from evaluation.grn_metrics import edge_recovery, predicted_edges_from_selections  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
@@ -95,7 +96,6 @@ def eval_sr(model, params_fit, problems) -> Dict[str, Any]:
     import warnings
 
     rows = []
-    nmses, r2s, vfs = [], [], []
     for ds in problems:
         # True vars = columns present (selection quality assessed separately)
         true_vars = ds.spec.variable_names
@@ -113,19 +113,8 @@ def eval_sr(model, params_fit, problems) -> Dict[str, Any]:
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
         sc = score_prediction(ds.y, y_hat, expr, true_vars, true_expr="")
         rows.append({"eq_id": ds.spec.eq_id, "pred": expr, "motif": ds.spec.motif, **sc})
-        if np.isfinite(sc["nmse"]):
-            nmses.append(sc["nmse"])
-        if np.isfinite(sc["r2"]):
-            r2s.append(sc["r2"])
-        vfs.append(sc.get("var_f1", 0.0))
     return {
-        "aggregate": {
-            "n_eval": float(len(problems)),
-            "n_valid": float(len(nmses)),
-            "nmse": float(np.median(nmses)) if nmses else float("inf"),
-            "r2": float(np.median(r2s)) if r2s else float("-inf"),
-            "var_f1": float(np.mean(vfs)) if vfs else 0.0,
-        },
+        "aggregate": aggregate_prediction_scores(rows),
         "per_problem": rows,
     }
 
