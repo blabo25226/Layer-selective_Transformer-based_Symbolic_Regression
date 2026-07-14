@@ -27,10 +27,15 @@ def train_selective(
     epochs: int = 5,
     lr: float = 1e-4,
     device: Optional[torch.device] = None,
+    val_loader: Optional[DataLoader] = None,
+    patience: int = 0,
 ) -> Dict[str, float]:
     """
     Fine-tune `model` with only `layer_names` trainable.
     If layer_names is None, train all parameters.
+
+    If ``val_loader`` and ``patience>0``, early-stop on validation CE
+    (keeps best weights) to reduce overfit risk.
     """
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -49,12 +54,29 @@ def train_selective(
             "trainable": 0,
             "total": total,
             "epochs": 0,
+            "best_val_ce": float("nan"),
+            "stopped_epoch": 0.0,
         }
 
     optim = torch.optim.Adam(params, lr=lr)
     last_loss = float("nan")
+    best_val = float("inf")
+    best_state = None
+    bad = 0
+    stopped_epoch = 0
 
-    for _ in range(epochs):
+    def _ce(loader: DataLoader) -> float:
+        model.eval()
+        losses: List[float] = []
+        with torch.no_grad():
+            for batch in loader:
+                nums, tokens = batch[0].to(device), batch[1].to(device)
+                output, trg = model.forward([nums, tokens])
+                losses.append(float(model.compute_loss(output, trg).cpu()))
+        model.train()
+        return float(sum(losses) / max(len(losses), 1)) if losses else float("nan")
+
+    for ep in range(epochs):
         epoch_losses: List[float] = []
         for batch in train_loader:
             nums, tokens = batch[0].to(device), batch[1].to(device)
@@ -65,11 +87,28 @@ def train_selective(
             optim.step()
             epoch_losses.append(float(loss.detach().cpu()))
         last_loss = float(sum(epoch_losses) / max(len(epoch_losses), 1))
+        stopped_epoch = ep + 1
+
+        if val_loader is not None and patience > 0:
+            val_ce = _ce(val_loader)
+            if val_ce < best_val - 1e-4:
+                best_val = val_ce
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                bad = 0
+            else:
+                bad += 1
+                if bad >= patience:
+                    break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
 
     return {
         "final_loss": last_loss,
         "trainable": float(trainable),
         "total": float(total),
-        "epochs": float(epochs),
+        "epochs": float(stopped_epoch),
         "trainable_fraction": float(trainable / total) if total else 0.0,
+        "best_val_ce": float(best_val) if best_state is not None else float("nan"),
+        "stopped_epoch": float(stopped_epoch),
     }
