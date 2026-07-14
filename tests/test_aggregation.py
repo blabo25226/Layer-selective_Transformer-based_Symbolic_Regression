@@ -17,8 +17,9 @@ def test_failure_aware_aggregation_keeps_invalid_predictions():
     assert agg["n_total"] == 2
     assert agg["n_valid"] == 1
     assert agg["valid_rate"] == 0.5
-    assert agg["nmse"] == 0.2
+    assert agg["valid_nmse"] == 0.2
     assert agg["penalized_nmse"] == 50.1
+    assert agg["nmse"] == agg["penalized_nmse"]
     assert agg["sym_rate"] == 0.5
 
 

@@ -57,8 +57,12 @@ def aggregate_prediction_scores(
     ]
     out["penalized_nmse"] = float(np.median(penalized_nmse)) if penalized_nmse else float("nan")
     out["penalized_r2"] = float(np.median(penalized_r2)) if penalized_r2 else float("nan")
-    out["nmse"] = out["nmse_median"]
-    out["r2"] = out["r2_median"]
+    out["valid_nmse"] = out["nmse_median"]
+    out["valid_r2"] = out["r2_median"]
+    # Primary aliases include every attempted problem; conditional metrics are
+    # explicitly named ``valid_*`` to prevent accidental survivorship bias.
+    out["nmse"] = out["penalized_nmse"]
+    out["r2"] = out["penalized_r2"]
     out["var_f1"] = out.get("var_f1_mean", float("nan"))
     out["sym_rate"] = out.get("sym_recovery_mean", float("nan"))
     out["complexity"] = out["complexity_mean"]
