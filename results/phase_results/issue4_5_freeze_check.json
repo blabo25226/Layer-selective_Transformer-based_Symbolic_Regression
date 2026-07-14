@@ -1,0 +1,68 @@
+{
+  "total_parameters": 26395708,
+  "cases": {
+    "all_frozen": {
+      "layers": [],
+      "trainable": 0,
+      "fraction": 0.0
+    },
+    "output_head": {
+      "layers": [
+        "output_head"
+      ],
+      "trainable": 30780,
+      "fraction": 0.0011660986702838204,
+      "grad_nonzero_on_selected": true
+    },
+    "encoder_0": {
+      "layers": [
+        "encoder_0"
+      ],
+      "trainable": 1442816,
+      "fraction": 0.05466100776686877,
+      "grad_nonzero_on_selected": true
+    },
+    "decoder_0": {
+      "layers": [
+        "decoder_0"
+      ],
+      "trainable": 2629632,
+      "fraction": 0.09962346908823207,
+      "grad_nonzero_on_selected": true
+    },
+    "encoder_0+decoder_0": {
+      "layers": [
+        "encoder_0",
+        "decoder_0"
+      ],
+      "trainable": 4072448,
+      "fraction": 0.15428447685510083,
+      "grad_nonzero_on_selected": true
+    },
+    "all_encoder_blocks": {
+      "layers": [
+        "encoder_0",
+        "encoder_1",
+        "encoder_2",
+        "encoder_3",
+        "encoder_4",
+        "encoder_5"
+      ],
+      "trainable": 12097536,
+      "fraction": 0.458314510828806,
+      "grad_nonzero_on_selected": true
+    },
+    "all_decoder_blocks": {
+      "layers": [
+        "decoder_0",
+        "decoder_1",
+        "decoder_2",
+        "decoder_3",
+        "decoder_4"
+      ],
+      "trainable": 13148160,
+      "fraction": 0.4981173454411604,
+      "grad_nonzero_on_selected": true
+    }
+  }
+}

@@ -99,7 +99,13 @@ python scripts/phase0_tpsr_smoke.py
 - [x] TPSR デモ実行（`scripts/phase0_tpsr_smoke.py`）
 - [ ] 再現用 Notebook（`.py` で代替中）
 
+## Follow-up: Issues 3–5 (done)
+
+- Issue 3: `scripts/issue3_list_layers.py` → `issue3_report.md`
+- Issue 4–5: `scripts/issue4_5_freeze_check.py` → `issue4_5_report.md`
+- Core API: `src/models/layer_selector.py`
+
 ## Next steps
 
-1. `python scripts/phase0_run_all.py` で一括確認
-2. Issue 3: NeSymReS の encoder/decoder 層一覧取得（Phase 1 前準備）
+1. Issue 6 / Phase 1: 合成 Hill / GRN 方程式データ生成
+2. Issue 7: PySR baseline on that data

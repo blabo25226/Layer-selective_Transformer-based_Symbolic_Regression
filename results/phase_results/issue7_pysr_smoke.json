@@ -1,0 +1,14 @@
+{
+  "eq_id": "act_train_1",
+  "family": "activation",
+  "true_params": {
+    "alpha": 1.0,
+    "K": 1.0,
+    "n": 2.0,
+    "beta": 0.5
+  },
+  "true_expr_template": "alpha*x_2**n/(K**n+x_2**n)-beta*x_1",
+  "pysr_equation": "(-1.0 / (square(x_2) + 1.0)) + (1.0 - (x_1 * 0.5))",
+  "pysr_loss": 1.4873617e-15,
+  "nmse": 8.882607638032978e-26
+}

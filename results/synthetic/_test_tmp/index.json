@@ -1,0 +1,436 @@
+[
+  {
+    "eq_id": "act_train_1",
+    "family": "activation",
+    "split": "train",
+    "motif": "single_activation",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "act_train_1.npz",
+    "target_expr": "alpha*x_2**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 1.0,
+      "K": 1.0,
+      "n": 2.0,
+      "beta": 0.5
+    }
+  },
+  {
+    "eq_id": "act_train_2",
+    "family": "activation",
+    "split": "train",
+    "motif": "single_activation",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "act_train_2.npz",
+    "target_expr": "alpha*x_2**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 1.5,
+      "K": 0.8,
+      "n": 2.0,
+      "beta": 0.4
+    }
+  },
+  {
+    "eq_id": "act_train_3",
+    "family": "activation",
+    "split": "train",
+    "motif": "single_activation",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "act_train_3.npz",
+    "target_expr": "alpha*x_2**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 2.0,
+      "K": 1.2,
+      "n": 3.0,
+      "beta": 0.6
+    }
+  },
+  {
+    "eq_id": "act_train_4",
+    "family": "activation",
+    "split": "train",
+    "motif": "single_activation",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "act_train_4.npz",
+    "target_expr": "alpha*x_2**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 1.2,
+      "K": 1.5,
+      "n": 2.0,
+      "beta": 0.3
+    }
+  },
+  {
+    "eq_id": "rep_train_5",
+    "family": "repression",
+    "split": "train",
+    "motif": "single_repression",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "rep_train_5.npz",
+    "target_expr": "alpha*K**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 1.0,
+      "K": 1.0,
+      "n": 2.0,
+      "beta": 0.5
+    }
+  },
+  {
+    "eq_id": "rep_train_6",
+    "family": "repression",
+    "split": "train",
+    "motif": "single_repression",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "rep_train_6.npz",
+    "target_expr": "alpha*K**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 1.5,
+      "K": 0.8,
+      "n": 2.0,
+      "beta": 0.4
+    }
+  },
+  {
+    "eq_id": "rep_train_7",
+    "family": "repression",
+    "split": "train",
+    "motif": "single_repression",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "rep_train_7.npz",
+    "target_expr": "alpha*K**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 2.0,
+      "K": 1.2,
+      "n": 3.0,
+      "beta": 0.6
+    }
+  },
+  {
+    "eq_id": "tog_dx_train_8",
+    "family": "toggle",
+    "split": "train",
+    "motif": "toggle_dx",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "tog_dx_train_8.npz",
+    "target_expr": "alpha1/(1+x_2**n1)-beta1*x_1",
+    "parameters": {
+      "alpha1": 1.0,
+      "n1": 2.0,
+      "beta1": 0.5,
+      "alpha2": 1.0,
+      "n2": 2.0,
+      "beta2": 0.5,
+      "target": 0.0
+    }
+  },
+  {
+    "eq_id": "tog_dy_train_9",
+    "family": "toggle",
+    "split": "train",
+    "motif": "toggle_dy",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "tog_dy_train_9.npz",
+    "target_expr": "alpha2/(1+x_1**n2)-beta2*x_2",
+    "parameters": {
+      "alpha1": 1.0,
+      "n1": 2.0,
+      "beta1": 0.5,
+      "alpha2": 1.0,
+      "n2": 2.0,
+      "beta2": 0.5,
+      "target": 1.0
+    }
+  },
+  {
+    "eq_id": "tog_dx_train_10",
+    "family": "toggle",
+    "split": "train",
+    "motif": "toggle_dx",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "tog_dx_train_10.npz",
+    "target_expr": "alpha1/(1+x_2**n1)-beta1*x_1",
+    "parameters": {
+      "alpha1": 1.5,
+      "n1": 3.0,
+      "beta1": 0.4,
+      "alpha2": 1.2,
+      "n2": 2.0,
+      "beta2": 0.6,
+      "target": 0.0
+    }
+  },
+  {
+    "eq_id": "tog_dy_train_11",
+    "family": "toggle",
+    "split": "train",
+    "motif": "toggle_dy",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "tog_dy_train_11.npz",
+    "target_expr": "alpha2/(1+x_1**n2)-beta2*x_2",
+    "parameters": {
+      "alpha1": 1.5,
+      "n1": 3.0,
+      "beta1": 0.4,
+      "alpha2": 1.2,
+      "n2": 2.0,
+      "beta2": 0.6,
+      "target": 1.0
+    }
+  },
+  {
+    "eq_id": "rpl_x1_train_12",
+    "family": "repressilator",
+    "split": "train",
+    "motif": "repressilator_dx_1",
+    "n_points": 20,
+    "n_vars": 3,
+    "file": "rpl_x1_train_12.npz",
+    "target_expr": "alpha/(1+x_3**n)-beta*x_1",
+    "parameters": {
+      "alpha": 1.5,
+      "n": 2.0,
+      "beta": 0.5,
+      "target_idx": 0.0
+    }
+  },
+  {
+    "eq_id": "rpl_x2_train_13",
+    "family": "repressilator",
+    "split": "train",
+    "motif": "repressilator_dx_2",
+    "n_points": 20,
+    "n_vars": 3,
+    "file": "rpl_x2_train_13.npz",
+    "target_expr": "alpha/(1+x_1**n)-beta*x_2",
+    "parameters": {
+      "alpha": 1.5,
+      "n": 2.0,
+      "beta": 0.5,
+      "target_idx": 1.0
+    }
+  },
+  {
+    "eq_id": "rpl_x3_train_14",
+    "family": "repressilator",
+    "split": "train",
+    "motif": "repressilator_dx_3",
+    "n_points": 20,
+    "n_vars": 3,
+    "file": "rpl_x3_train_14.npz",
+    "target_expr": "alpha/(1+x_2**n)-beta*x_3",
+    "parameters": {
+      "alpha": 1.5,
+      "n": 2.0,
+      "beta": 0.5,
+      "target_idx": 2.0
+    }
+  },
+  {
+    "eq_id": "rpl_x1_train_15",
+    "family": "repressilator",
+    "split": "train",
+    "motif": "repressilator_dx_1",
+    "n_points": 20,
+    "n_vars": 3,
+    "file": "rpl_x1_train_15.npz",
+    "target_expr": "alpha/(1+x_3**n)-beta*x_1",
+    "parameters": {
+      "alpha": 2.0,
+      "n": 3.0,
+      "beta": 0.4,
+      "target_idx": 0.0
+    }
+  },
+  {
+    "eq_id": "rpl_x2_train_16",
+    "family": "repressilator",
+    "split": "train",
+    "motif": "repressilator_dx_2",
+    "n_points": 20,
+    "n_vars": 3,
+    "file": "rpl_x2_train_16.npz",
+    "target_expr": "alpha/(1+x_1**n)-beta*x_2",
+    "parameters": {
+      "alpha": 2.0,
+      "n": 3.0,
+      "beta": 0.4,
+      "target_idx": 1.0
+    }
+  },
+  {
+    "eq_id": "rpl_x3_train_17",
+    "family": "repressilator",
+    "split": "train",
+    "motif": "repressilator_dx_3",
+    "n_points": 20,
+    "n_vars": 3,
+    "file": "rpl_x3_train_17.npz",
+    "target_expr": "alpha/(1+x_2**n)-beta*x_3",
+    "parameters": {
+      "alpha": 2.0,
+      "n": 3.0,
+      "beta": 0.4,
+      "target_idx": 2.0
+    }
+  },
+  {
+    "eq_id": "act_test_18",
+    "family": "activation",
+    "split": "test",
+    "motif": "single_activation",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "act_test_18.npz",
+    "target_expr": "alpha*x_2**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 2.5,
+      "K": 0.6,
+      "n": 4.0,
+      "beta": 0.7
+    }
+  },
+  {
+    "eq_id": "act_test_19",
+    "family": "activation",
+    "split": "test",
+    "motif": "single_activation",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "act_test_19.npz",
+    "target_expr": "alpha*x_2**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 0.8,
+      "K": 2.0,
+      "n": 3.0,
+      "beta": 0.2
+    }
+  },
+  {
+    "eq_id": "rep_test_20",
+    "family": "repression",
+    "split": "test",
+    "motif": "single_repression",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "rep_test_20.npz",
+    "target_expr": "alpha*K**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 2.5,
+      "K": 0.5,
+      "n": 4.0,
+      "beta": 0.8
+    }
+  },
+  {
+    "eq_id": "rep_test_21",
+    "family": "repression",
+    "split": "test",
+    "motif": "single_repression",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "rep_test_21.npz",
+    "target_expr": "alpha*K**n/(K**n+x_2**n)-beta*x_1",
+    "parameters": {
+      "alpha": 0.7,
+      "K": 1.8,
+      "n": 3.0,
+      "beta": 0.25
+    }
+  },
+  {
+    "eq_id": "tog_dx_test_22",
+    "family": "toggle",
+    "split": "test",
+    "motif": "toggle_dx",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "tog_dx_test_22.npz",
+    "target_expr": "alpha1/(1+x_2**n1)-beta1*x_1",
+    "parameters": {
+      "alpha1": 2.0,
+      "n1": 4.0,
+      "beta1": 0.3,
+      "alpha2": 1.8,
+      "n2": 3.0,
+      "beta2": 0.7,
+      "target": 0.0
+    }
+  },
+  {
+    "eq_id": "tog_dy_test_23",
+    "family": "toggle",
+    "split": "test",
+    "motif": "toggle_dy",
+    "n_points": 20,
+    "n_vars": 2,
+    "file": "tog_dy_test_23.npz",
+    "target_expr": "alpha2/(1+x_1**n2)-beta2*x_2",
+    "parameters": {
+      "alpha1": 2.0,
+      "n1": 4.0,
+      "beta1": 0.3,
+      "alpha2": 1.8,
+      "n2": 3.0,
+      "beta2": 0.7,
+      "target": 1.0
+    }
+  },
+  {
+    "eq_id": "rpl_x1_test_24",
+    "family": "repressilator",
+    "split": "test",
+    "motif": "repressilator_dx_1",
+    "n_points": 20,
+    "n_vars": 3,
+    "file": "rpl_x1_test_24.npz",
+    "target_expr": "alpha/(1+x_3**n)-beta*x_1",
+    "parameters": {
+      "alpha": 2.5,
+      "n": 4.0,
+      "beta": 0.6,
+      "target_idx": 0.0
+    }
+  },
+  {
+    "eq_id": "rpl_x2_test_25",
+    "family": "repressilator",
+    "split": "test",
+    "motif": "repressilator_dx_2",
+    "n_points": 20,
+    "n_vars": 3,
+    "file": "rpl_x2_test_25.npz",
+    "target_expr": "alpha/(1+x_1**n)-beta*x_2",
+    "parameters": {
+      "alpha": 2.5,
+      "n": 4.0,
+      "beta": 0.6,
+      "target_idx": 1.0
+    }
+  },
+  {
+    "eq_id": "rpl_x3_test_26",
+    "family": "repressilator",
+    "split": "test",
+    "motif": "repressilator_dx_3",
+    "n_points": 20,
+    "n_vars": 3,
+    "file": "rpl_x3_test_26.npz",
+    "target_expr": "alpha/(1+x_2**n)-beta*x_3",
+    "parameters": {
+      "alpha": 2.5,
+      "n": 4.0,
+      "beta": 0.6,
+      "target_idx": 2.0
+    }
+  }
+]

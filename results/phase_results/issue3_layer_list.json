@@ -1,0 +1,118 @@
+{
+  "checkpoint": "C:\\Document\\researches\\LTSR\\NSRS\\weights\\10M.ckpt",
+  "config": "C:\\Document\\researches\\LTSR\\NSRS\\jupyter\\100M\\config.yaml",
+  "architecture": {
+    "n_l_enc": 5,
+    "dec_layers": 5,
+    "dim_hidden": 512
+  },
+  "total_parameters": 26395708,
+  "trainable_before_freeze": 26395708,
+  "layers": [
+    {
+      "name": "encoder_0",
+      "kind": "encoder",
+      "module_path": "enc.selfatt1",
+      "index": 0,
+      "n_params": 1442816
+    },
+    {
+      "name": "encoder_1",
+      "kind": "encoder",
+      "module_path": "enc.selfatt.0",
+      "index": 1,
+      "n_params": 2130944
+    },
+    {
+      "name": "encoder_2",
+      "kind": "encoder",
+      "module_path": "enc.selfatt.1",
+      "index": 2,
+      "n_params": 2130944
+    },
+    {
+      "name": "encoder_3",
+      "kind": "encoder",
+      "module_path": "enc.selfatt.2",
+      "index": 3,
+      "n_params": 2130944
+    },
+    {
+      "name": "encoder_4",
+      "kind": "encoder",
+      "module_path": "enc.selfatt.3",
+      "index": 4,
+      "n_params": 2130944
+    },
+    {
+      "name": "encoder_5",
+      "kind": "encoder",
+      "module_path": "enc.selfatt.4",
+      "index": 5,
+      "n_params": 2130944
+    },
+    {
+      "name": "encoder_pma",
+      "kind": "encoder",
+      "module_path": "enc.outatt",
+      "index": null,
+      "n_params": 1057792
+    },
+    {
+      "name": "decoder_0",
+      "kind": "decoder",
+      "module_path": "decoder_transfomer.layers.0",
+      "index": 0,
+      "n_params": 2629632
+    },
+    {
+      "name": "decoder_1",
+      "kind": "decoder",
+      "module_path": "decoder_transfomer.layers.1",
+      "index": 1,
+      "n_params": 2629632
+    },
+    {
+      "name": "decoder_2",
+      "kind": "decoder",
+      "module_path": "decoder_transfomer.layers.2",
+      "index": 2,
+      "n_params": 2629632
+    },
+    {
+      "name": "decoder_3",
+      "kind": "decoder",
+      "module_path": "decoder_transfomer.layers.3",
+      "index": 3,
+      "n_params": 2629632
+    },
+    {
+      "name": "decoder_4",
+      "kind": "decoder",
+      "module_path": "decoder_transfomer.layers.4",
+      "index": 4,
+      "n_params": 2629632
+    },
+    {
+      "name": "output_head",
+      "kind": "head",
+      "module_path": "fc_out",
+      "index": null,
+      "n_params": 30780
+    },
+    {
+      "name": "tok_embedding",
+      "kind": "embedding",
+      "module_path": "tok_embedding",
+      "index": null,
+      "n_params": 30720
+    },
+    {
+      "name": "pos_embedding",
+      "kind": "embedding",
+      "module_path": "pos_embedding",
+      "index": null,
+      "n_params": 30720
+    }
+  ]
+}

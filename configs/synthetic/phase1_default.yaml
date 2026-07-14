@@ -1,0 +1,7 @@
+# Phase 1 synthetic GRN / Hill equation suite
+n_points: 200
+support_min: 0.0
+support_max: 3.0
+noise_std: 0.0
+seed: 0
+out_dir: results/synthetic/phase1_v1
