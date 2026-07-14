@@ -22,6 +22,7 @@ from data.dream4 import (  # noqa: E402
     find_dream4_root,
     list_net_ids,
     load_dream4_expression_bundle,
+    trajectory_train_test_split,
     load_dream4_network,
     targets_with_parents,
 )
@@ -237,14 +238,9 @@ def main() -> int:
             sr_targets = sr_targets[: args.sr_targets]
         log(f"Selection targets: {len(sel_targets)}; SR targets: {len(sr_targets)}")
 
-        n = X.shape[0]
-        rng = np.random.default_rng(1000 + net_id)
-        idx = rng.permutation(n)
-        n_tr = max(int(0.7 * n), 1)
-        tr, te = idx[:n_tr], idx[n_tr:]
-        if len(te) == 0:
-            te = tr
-        X_tr, Y_tr, X_te, Y_te = X[tr], Y[tr], X[te], Y[te]
+        X_tr, Y_tr, X_te, Y_te = trajectory_train_test_split(
+            bundle["times"], bundle["trajectories"], seed=1000 + net_id
+        )
 
         evaluated = set(sel_targets)
         true_edges = [(r, t) for r, t, _ in network.edges if t in evaluated]
@@ -338,7 +334,7 @@ def main() -> int:
         "",
         f"- Data root: `{root.as_posix()}`",
         f"- Networks: {net_ids}",
-        f"- Supervision: timeseries finite-difference `dx/dt` (70/30; "
+        f"- Supervision: timeseries finite-difference `dx/dt` (70/30 by trajectory; "
         f"~200 rows/net — no multifactorial in Size100 training set)",
         f"- Transfer FT: selective `{', '.join(HIGH_CONTRIB)}` on synthetic dreamlike",
         f"- Selection on {'all genes' if args.select_all else 'genes with parents'}; "

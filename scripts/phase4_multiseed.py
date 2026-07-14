@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import sys
 import time
 from pathlib import Path
@@ -38,12 +39,15 @@ from data.finetune_dataset import (  # noqa: E402
     collate_finetune,
     load_split_problems,
 )
+from data.splits import split_synthetic_train_validation  # noqa: E402
+from evaluation.generalization import _ci95  # noqa: E402
 from evaluation.layer_contribution import (  # noqa: E402
     compute_contributions,
     rank_by_contribution,
 )
 from models.nesymres_adapter import load_nesymres  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
 # Reuse the single-seed Phase 4 building blocks.
 from phase4_layer_contribution import (  # noqa: E402
@@ -56,14 +60,13 @@ from phase4_layer_contribution import (  # noqa: E402
     make_eval_fit_params,
 )
 
-OUT_DIR = ROOT / "results" / "phase_results" / "phase4_multiseed"
-REPORT = ROOT / "results" / "phase_results" / "phase4_multiseed_report.md"
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase4_multiseed", "phase4_multiseed_report.md")
 
 # Metrics: (key, higher_is_better)
 METRICS = [
     ("val_ce", False),
-    ("nmse", False),
-    ("r2", True),
+    ("penalized_nmse", False),
+    ("penalized_r2", True),
     ("var_f1", True),
     ("sym_rate", True),
 ]
@@ -94,26 +97,14 @@ def run_one_seed(
     fit_eval,
     word2id,
     train_problems,
-    test_problems,
+    validation_problems,
     args,
     seed: int,
     device,
 ) -> Dict[str, Dict[str, float]]:
     """Return {metric: {condition: contribution}} for one seed."""
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-
     train_ds = GRNFinetuneDataset(train_problems, word2id, max_points=args.max_points, seed=seed)
-    val_ds = GRNFinetuneDataset(test_problems, word2id, max_points=args.max_points, seed=seed + 1000)
-    gen = torch.Generator()
-    gen.manual_seed(seed)
-    loader = DataLoader(
-        train_ds,
-        batch_size=min(args.batch_size, len(train_ds)),
-        shuffle=True,
-        collate_fn=collate_finetune,
-        generator=gen,
-    )
+    val_ds = GRNFinetuneDataset(validation_problems, word2id, max_points=args.max_points, seed=seed + 1000)
     val_loader = DataLoader(
         val_ds,
         batch_size=min(args.batch_size, max(len(val_ds), 1)),
@@ -125,12 +116,29 @@ def run_one_seed(
     scores_by_metric: Dict[str, Dict[str, float]] = {m: {} for m, _ in METRICS}
 
     for name, layers in conditions.items():
+        # Paired comparison: identical stochastic state and batch order.
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        gen = torch.Generator().manual_seed(seed)
+        loader = DataLoader(
+            train_ds,
+            batch_size=min(args.batch_size, len(train_ds)),
+            shuffle=True,
+            collate_fn=collate_finetune,
+            generator=gen,
+        )
         model = clone_model(base_model)
         if not (name == "pretrained" or layers == []):
             train_selective(model, loader, layers, epochs=args.epochs, lr=args.lr, device=device)
         model.eval()
         val_ce = eval_ce_loss(model, val_loader, device) if len(val_ds) else float("nan")
-        agg = eval_problems(model, fit_eval, test_problems)["aggregate"]
+        torch.manual_seed(seed + 10_000)
+        np.random.seed(seed + 10_000)
+        random.seed(seed + 10_000)
+        agg = eval_problems(model, fit_eval, validation_problems)["aggregate"]
         agg["val_ce"] = val_ce
         for m, _ in METRICS:
             scores_by_metric[m][name] = float(agg.get(m, float("nan")))
@@ -174,11 +182,13 @@ def aggregate(per_seed: List[Dict[str, Dict[str, float]]]) -> Dict[str, Dict[str
             n = len(arr)
             std = float(arr.std(ddof=1)) if n > 1 else 0.0
             sem = std / math.sqrt(n) if n > 0 else float("nan")
+            ci = _ci95(arr.tolist())
             stats[l] = {
                 "mean": float(arr.mean()),
                 "std": std,
                 "sem": float(sem),
-                "ci95": float(1.96 * sem),
+                "ci95": float(ci["ci95"]),
+                "ci_method": "student_t",
                 "n": float(n),
                 "top3_frac": top3_counts.get(l, 0) / len(per_seed),
             }
@@ -195,6 +205,8 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-points", type=int, default=80)
     parser.add_argument("--eval-limit", type=int, default=0)
+    parser.add_argument("--validation-fraction", type=float, default=0.2)
+    parser.add_argument("--split-seed", type=int, default=1729)
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
     parser.add_argument("--bfgs-stop-time", type=float, default=0.5)
@@ -208,11 +220,15 @@ def main() -> int:
     fit_eval = make_eval_fit_params(params_fit, args.beam_size, args.bfgs_restarts, args.bfgs_stop_time)
     word2id = json.loads(EQ_SETTING.read_text(encoding="utf-8"))["word2id"]
 
-    train_problems = load_split_problems(data_dir, "train")
-    test_problems = load_split_problems(data_dir, "test")
+    all_train_problems = load_split_problems(data_dir, "train")
+    train_problems, validation_problems = split_synthetic_train_validation(
+        all_train_problems,
+        validation_fraction=args.validation_fraction,
+        seed=args.split_seed,
+    )
     if args.eval_limit > 0:
-        test_problems = test_problems[: args.eval_limit]
-    log(f"train={len(train_problems)} test={len(test_problems)}")
+        validation_problems = validation_problems[: args.eval_limit]
+    log(f"train={len(train_problems)} validation={len(validation_problems)} (test unused)")
 
     per_seed: List[Dict[str, Dict[str, float]]] = []
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -220,7 +236,7 @@ def main() -> int:
         t0 = time.time()
         log(f"\n=== seed {seed} ===")
         contrib = run_one_seed(
-            base_model, fit_eval, word2id, train_problems, test_problems, args, seed, device
+            base_model, fit_eval, word2id, train_problems, validation_problems, args, seed, device
         )
         per_seed.append(contrib)
         (OUT_DIR / f"contrib_seed{seed}.json").write_text(
@@ -237,7 +253,8 @@ def main() -> int:
     lines = [
         "# Phase 4 (multi-seed): layer contribution with CI",
         "",
-        f"- Data: `{data_dir.as_posix()}` (train {len(train_problems)} / test {len(test_problems)})",
+        f"- Data: `{data_dir.as_posix()}` (train {len(train_problems)} / validation {len(validation_problems)})",
+        "- Validation is held out by motif; the test split is not used for layer selection.",
         f"- Seeds: {args.seeds}  |  epochs: {args.epochs}, lr: {args.lr}",
         f"- Device: `{device}`",
         "",

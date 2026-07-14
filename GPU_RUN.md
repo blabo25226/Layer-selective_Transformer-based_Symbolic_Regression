@@ -1,91 +1,95 @@
-# GPU 実行ガイド（スケールアップ版）
+# GPU本実験の実行手順
 
-CPU パイロット（`--eval-limit 8`, 3 seed, 10M 重み, 軽量デコード）でパイプラインと
-予備シグナルは検証済み。本ドキュメントは、その**論文規模版**を GPU マシンで回す手順。
+この手順は、CPU上での単体テストとsmoke testが完了した後に使用する。GPU実験はrunごとに
+`results/runs/<run-id>/`へ保存され、既存レポートを上書きしない。
 
-パイロットとの違い（＝GPU で効くところ）:
+## 1. 環境
 
-| 項目 | パイロット(CPU) | GPU 本番 |
-|---|---|---|
-| 事前学習重み | 10M.ckpt | **100M.ckpt**（同一アーキ・より良い prior） |
-| スイート | n=6, 骨格15 | **n=24〜**（大規模化） |
-| seed | 3 | **5〜10**（CI を狭める / A-1） |
-| デコード | beam1, restart1, stop0.3 | **beam5, restart5, stop2.0** |
-| TPSR | rollout2/width2 | **rollout8/horizon30/width3** |
-| eval | test 8件 | **全件** |
-
-> **注意**: NeSymReS の "10M/100M" は**学習式数**であり、モデルは同じ約26M・12層。
-> なので 100M へは「重みファイルの差し替え」だけで、config はそのまま使える。
-
----
-
-## 1. 環境構築（Linux + NVIDIA GPU）
-
-Python **3.10** を推奨（`hydra-core==1.0.0` がそのまま動く）。3.11/3.12 の場合は
-`hydra-core==1.3.2 omegaconf==2.3.0` に上げれば OK（nesymres は `import hydra` と
-`hydra.utils.to_absolute_path` しか使わない）。
+Python 3.10を推奨する。NeSymReSが使用するHydra 1.0はPython 3.12と互換性がない。
 
 ```bash
-conda create -n ltsr-gpu python=3.10 -y && conda activate ltsr-gpu
-# GPU 版 torch（CUDA は環境に合わせる。例: cu124）
+conda create -n ltsr-gpu python=3.10 -y
+conda activate ltsr-gpu
 pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
-pip install -r requirements/base.txt          # torch は上で入れたのでスキップされる
+pip install -r requirements/gpu.txt
 pip install -e NSRS/src
-pip install pysr                               # Phase 8 の PySR baseline 用（Julia 自動導入）
-python -c "import torch; print('CUDA', torch.cuda.is_available())"
+pip install pytest pysr
 ```
 
-## 2. 100M 重みの取得
+CUDA版PyTorchが維持されていることを確認する。
 
 ```bash
-huggingface-cli download TommasoBendinelli/NeuralSymbolicRegressionThatScales \
-    100M.ckpt --local-dir NSRS/weights
-# もしくは wget:
-# wget -O NSRS/weights/100M.ckpt \
-#   https://huggingface.co/TommasoBendinelli/NeuralSymbolicRegressionThatScales/resolve/main/100M.ckpt
-export LTSR_WEIGHTS="$PWD/NSRS/weights/100M.ckpt"
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
 ```
 
-`LTSR_WEIGHTS` / `LTSR_CONFIG` / `LTSR_EQ_SETTING` を環境変数で指定すると、全スクリプトが
-その checkpoint/config を使う（未設定なら同梱の 10M.ckpt）。
+## 2. checkpointと設定
 
-## 3. 実行
+checkpoint、config、eq_settingは同じモデル構成の組を指定する。ファイル名だけから10M/100Mの
+構造互換性を仮定しない。実行前検査はCUDAとファイルの存在、eq_settingの最低限の内容を確認し、
+実際のモデルロードはPhase 4開始時にも検証される。
 
 ```bash
-# 一括（推奨）
 export LTSR_WEIGHTS="$PWD/NSRS/weights/100M.ckpt"
+export LTSR_CONFIG="$PWD/NSRS/jupyter/100M/config.yaml"
+export LTSR_EQ_SETTING="$PWD/NSRS/jupyter/100M/eq_setting.json"
+python scripts/preflight_gpu.py \
+  --weights "$LTSR_WEIGHTS" --config "$LTSR_CONFIG" --eq-setting "$LTSR_EQ_SETTING"
+```
+
+## 3. CPUで先に確認する
+
+```bash
+python -m compileall -q src scripts tests
+python -m pytest -q
+```
+
+外部モデルを使うテストを含むため、必ずPython 3.10/3.11環境で実行する。
+
+## 4. 小規模GPU smoke test
+
+本実験の前に、別run IDで小規模実行する。
+
+```bash
+RUN_ID=gpu_smoke NPS=2 SEEDS="0 1" EPOCHS=1 EVAL_LIMIT=2 \
+BEAM=1 BFGS_RESTARTS=1 BFGS_STOP=0.2 NOISE="0.0" PYSR=0 \
 bash scripts/run_gpu_pipeline.sh
-
-# 調整したい場合は env で上書き
-SEEDS="0 1 2 3 4 5 6 7" NPS=40 BEAM=10 PYSR=1 bash scripts/run_gpu_pipeline.sh
 ```
 
-個別に回す場合の例:
+`results/runs/gpu_smoke/manifest.json`のstatusが`complete`で、各PhaseのJSONとreportが存在することを確認する。
+
+## 5. 本実験
 
 ```bash
-python scripts/phase4_multiseed.py --data-dir results/synthetic/diverse_gpu \
-    --seeds 0 1 2 3 4 --epochs 8 --beam-size 5 --bfgs-restarts 5 --bfgs-stop-time 2.0
+RUN_ID=paper_gpu_01 SEEDS="0 1 2 3 4" NPS=24 EPOCHS=8 \
+BEAM=5 BFGS_RESTARTS=5 BFGS_STOP=2.0 PYSR=1 \
+bash scripts/run_gpu_pipeline.sh
 ```
 
-## 4. 出力
+主な調整項目は`SEEDS`、`NPS`、`EPOCHS`、`BEAM`、`BFGS_RESTARTS`、`BFGS_STOP`、
+`NOISE`、`PYSR`である。BFGSは主にCPUを使うため、最初から最大設定にせずsmoke testの時間から
+全体時間を見積もる。
 
-`results/phase_results/` に各レポートが上書き生成される:
+## 6. 出力
 
-- `phase4_multiseed_report.md` — 層寄与 mean±95%CI・top-3 安定度（A-1）
-- `phase5_report.md` — 選択層 vs random/bottom/full（H2, A-3）
-- `phase6_noise_report.md` — H3 ノイズ頑健性
-- `phase8_lodo_report.md` — donor 交差検証（PySR vs selective）
+```text
+results/runs/<run-id>/
+  manifest.json
+  logs/
+  phase4_multiseed/
+  phase5/
+  phase6_noise/
+  phase8_lodo/
+  reports/
+```
 
-## 5. 見どころ（パイロットで出た仮説の確定ポイント）
+manifestにはgit branch/commit、Python、PyTorch、CUDA、GPU、checkpoint SHA256、主要な環境変数、
+開始・終了時刻、成否が保存される。途中でコマンドが失敗するとpipelineは停止し、statusは`failed`になる。
 
-- **層の役割分担**：CE→decoder、予測→encoder が seed 安定で残るか（成功ケースB）。
-- **H2**：top-k が random/bottom を CI で明確に上回り、少数層が全層 FT 以上か。
-- **H3**：現実的 TPSR 予算でノイズ耐性が改善するか（パイロットでは小予算で不支持）。
-- **汎化**：LODO で selective が PySR より holdout NMSE で勝つか（CI 付き）。
+## 7. 結果を採用する条件
 
-## 6. コスト目安
-
-decode(BFGS) は CPU 律速なので、GPU でも `--eval-limit` と `--bfgs-*` が総時間を支配する。
-全件・beam5・restart5・stop2.0・5 seed だと Phase 4 multi-seed だけで数時間規模。
-まず `--eval-limit 30` 程度で回し、良ければ全件へ。BFGS を並列化したい場合は
-decode ループのプロセス並列化が次の最適化候補。
+- Phase 4はvalidationのみで層を選択し、testを使用していない。
+- Phase 5は`phase4_multiseed/contrib_aggregate.json`から層を選ぶ。
+- valid prediction rateとfailure-penalized NMSEを方法間で比較する。
+- DREAM4は有限差分前にtrajectory単位で分割する。
+- 少数seed/donorの95% CIはStudentのt区間として解釈する。
+- symbolic recovery、複雑度、実行時間もNMSEと併記する。

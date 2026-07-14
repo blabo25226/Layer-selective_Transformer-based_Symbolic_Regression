@@ -89,3 +89,15 @@ def test_load_phase4_ranking_fallback_and_file(tmp_path):
     )
     ranking, source = load_phase4_ranking(p, "accuracy")
     assert source == "phase4" and ranking[0] == "encoder_2"
+
+
+def test_load_multiseed_aggregate_ranking(tmp_path):
+    p = tmp_path / "contrib_aggregate.json"
+    p.write_text(json.dumps({
+        "val_ce": {"decoder_4": {"mean": 0.9}, "encoder_2": {"mean": 0.2}},
+        "nmse": {"decoder_4": {"mean": 0.1}, "encoder_2": {"mean": 0.8}},
+        "r2": {"decoder_4": {"mean": 0.1}, "encoder_2": {"mean": 0.8}},
+    }), encoding="utf-8")
+    ranking, source = load_phase4_ranking(p, "accuracy")
+    assert source == "phase4_multiseed"
+    assert ranking[0] == "encoder_2"

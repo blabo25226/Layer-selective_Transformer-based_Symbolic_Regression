@@ -23,6 +23,7 @@ from data.dream4 import (  # noqa: E402
     list_size10_net_ids,
     load_size10_expression_bundle,
     load_size10_network,
+    trajectory_train_test_split,
 )
 from data.dreamlike_grn import (  # noqa: E402
     build_local_problem,
@@ -217,13 +218,9 @@ def main() -> int:
         bundle = load_size10_expression_bundle(root, net_id)
         # Use timeseries FD as SR supervision; selection on same X/y
         X, Y = bundle["X_ts"], bundle["Y_ts"]
-        # train/test split by rows
-        n = X.shape[0]
-        rng = np.random.default_rng(net_id)
-        idx = rng.permutation(n)
-        n_tr = int(0.7 * n)
-        tr, te = idx[:n_tr], idx[n_tr:]
-        X_tr, Y_tr, X_te, Y_te = X[tr], Y[tr], X[te], Y[te]
+        X_tr, Y_tr, X_te, Y_te = trajectory_train_test_split(
+            bundle["times"], bundle["trajectories"], seed=net_id
+        )
 
         evaluated = set(
             range(
@@ -319,7 +316,7 @@ def main() -> int:
         "",
         f"- Data root: `{root.as_posix()}`",
         f"- Networks: {net_ids}",
-        f"- Supervision: timeseries finite-difference `dx/dt` (70/30 split)",
+        f"- Supervision: timeseries finite-difference `dx/dt` (70/30 trajectory split)",
         f"- Transfer FT: selective `{', '.join(HIGH_CONTRIB)}` on synthetic dreamlike oracle",
         f"- k={args.k}, max_vars={args.max_vars}, target_limit={args.target_limit}",
         f"- Device: `{device}`",

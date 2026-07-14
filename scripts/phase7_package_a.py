@@ -68,7 +68,7 @@ from training.selective_layers import resolve_selected_layers  # noqa: E402
 # High-contribution layer set = top-k of the Phase 4 accuracy ranking (principled
 # a-priori; NOT the earlier post-hoc middle_3). Falls back to the frozen ranking
 # if contributions.json is absent.
-_PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4" / "contributions.json"
+_PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4_multiseed" / "contrib_aggregate.json"
 HIGH_CONTRIB, _HC_SOURCE, _HC_RULE = resolve_selected_layers(
     _PHASE4_CONTRIB, mode="accuracy", rule="top", k=3
 )

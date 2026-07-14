@@ -35,9 +35,11 @@ from data.dreamlike_grn import build_local_problem  # noqa: E402
 from data.finetune_dataset import GRNFinetuneDataset, collate_finetune  # noqa: E402
 from data.human import build_human_local_problems, prepare_gse112372  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.aggregation import aggregate_prediction_scores  # noqa: E402
 from evaluation.generalization import aggregate_lodo, rank_by_generalization  # noqa: E402
 from models.nesymres_adapter import load_nesymres  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
 # Reuse Phase 8 building blocks unchanged.
 from phase8_run_human import (  # noqa: E402
@@ -55,8 +57,7 @@ from phase8_run_human import (  # noqa: E402
     stack_donor_derivatives,
 )
 
-OUT_DIR = ROOT / "results" / "phase_results" / "phase8_lodo"
-REPORT = ROOT / "results" / "phase_results" / "phase8_lodo_report.md"
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase8_lodo", "phase8_lodo_report.md")
 
 
 def log(msg: str) -> None:
@@ -66,7 +67,7 @@ def log(msg: str) -> None:
 def pysr_fold(prior_probs, prior_sel, panel, X_te, Y_te, max_vars, niters) -> Dict[str, float]:
     """PySR in-donor + holdout NMSE for one fold (mirrors phase8 main)."""
     network = panel.as_grn_like()
-    nmses, hold_nmses = [], []
+    in_rows, hold_rows = [], []
     for ds in prior_probs:
         try:
             expr = run_pysr(ds.X, ds.y, ds.spec.variable_names, niters)
@@ -74,8 +75,7 @@ def pysr_fold(prior_probs, prior_sel, panel, X_te, Y_te, max_vars, niters) -> Di
             expr = ""
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
         sc = score_prediction(ds.y, y_hat, expr, ds.spec.variable_names, true_expr="")
-        if np.isfinite(sc["nmse"]):
-            nmses.append(sc["nmse"])
+        in_rows.append(sc)
         motif = ds.spec.motif or ""
         tname = motif.split("target=")[-1].split(";")[0] if "target=" in motif else ""
         if tname in panel.gene_names:
@@ -87,11 +87,14 @@ def pysr_fold(prior_probs, prior_sel, panel, X_te, Y_te, max_vars, niters) -> Di
             )
             y_hat_te = eval_expression(expr, te.X, te.spec.variable_names) if expr else None
             sc_te = score_prediction(te.y, y_hat_te, expr, te.spec.variable_names, true_expr="")
-            if np.isfinite(sc_te["nmse"]):
-                hold_nmses.append(sc_te["nmse"])
+            hold_rows.append(sc_te)
+    in_agg = aggregate_prediction_scores(in_rows)
+    hold_agg = aggregate_prediction_scores(hold_rows)
     return {
-        "in": float(np.median(nmses)) if nmses else float("inf"),
-        "hold": float(np.median(hold_nmses)) if hold_nmses else float("inf"),
+        "in": in_agg["penalized_nmse"],
+        "hold": hold_agg["penalized_nmse"],
+        "in_valid_rate": in_agg["valid_rate"],
+        "hold_valid_rate": hold_agg["valid_rate"],
     }
 
 
@@ -150,7 +153,12 @@ def main() -> int:
             model.eval()
             inn = eval_sr(model, fit, prior_probs, decode="beam")
             hd = eval_holdout_donor(model, fit, panel, prior_probs, prior_sel, X_te, Y_te, decode="beam")
-            fold[name] = {"in": inn["aggregate"]["nmse"], "hold": hd["aggregate"]["nmse"]}
+            fold[name] = {
+                "in": inn["aggregate"]["penalized_nmse"],
+                "hold": hd["aggregate"]["penalized_nmse"],
+                "in_valid_rate": inn["aggregate"]["valid_rate"],
+                "hold_valid_rate": hd["aggregate"]["valid_rate"],
+            }
 
         if args.with_pysr:
             fold["pysr"] = pysr_fold(prior_probs, prior_sel, panel, X_te, Y_te, args.max_vars, args.pysr_iters)
