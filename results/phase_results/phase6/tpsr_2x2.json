@@ -1,0 +1,272 @@
+[
+  {
+    "condition": "pretrained_beam",
+    "finetune": "none",
+    "decode": "beam",
+    "layers": [],
+    "train": {
+      "trainable": 0.0,
+      "trainable_fraction": 0.0
+    },
+    "eval": {
+      "n_eval": 2.0,
+      "n_valid": 2.0,
+      "nmse": 0.20308628276731716,
+      "r2": 0.6843919287127493,
+      "var_f1": 1.0,
+      "sym_rate": 0.0,
+      "mean_time_sec": 2.7322514057159424,
+      "total_time_sec": 5.464502811431885
+    },
+    "per_problem": [
+      {
+        "eq_id": "act_test_18",
+        "pred": "x_2 + cos(x_1/x_2) - 0.998391424320015",
+        "true": "(2.5)*x_2**(4.0)/((0.6)**(4.0)+x_2**(4.0))-(0.7)*x_1",
+        "elapsed_sec": 2.8104844093322754,
+        "bfgs_loss": 0.7650055885314941,
+        "nmse": 0.36492419380001867,
+        "nmse_var": 0.5895797955994825,
+        "r2": 0.4104202044005175,
+        "var_precision": 1.0,
+        "var_recall": 1.0,
+        "var_f1": 1.0,
+        "complexity": 13.0,
+        "valid_pred": 1.0,
+        "sym_exact": 0.0,
+        "sym_skeleton": 0.0,
+        "sym_equiv": 0.0,
+        "sym_recovery": 0.0
+      },
+      {
+        "eq_id": "act_test_19",
+        "pred": "-0.223819550678204*(x_1 - x_2)*cos(3.43965637183495e-8*x_1)",
+        "true": "(0.8)*x_2**(3.0)/((2.0)**(3.0)+x_2**(3.0))-(0.2)*x_1",
+        "elapsed_sec": 2.6540184020996094,
+        "bfgs_loss": 0.003303999314084649,
+        "nmse": 0.041248371734615666,
+        "nmse_var": 0.04163634697501877,
+        "r2": 0.9583636530249813,
+        "var_precision": 1.0,
+        "var_recall": 1.0,
+        "var_f1": 1.0,
+        "complexity": 21.0,
+        "valid_pred": 1.0,
+        "sym_exact": 0.0,
+        "sym_skeleton": 0.0,
+        "sym_equiv": 0.0,
+        "sym_recovery": 0.0
+      }
+    ],
+    "elapsed_sec": 7.750020742416382
+  },
+  {
+    "condition": "pretrained_tpsr",
+    "finetune": "none",
+    "decode": "tpsr",
+    "layers": [],
+    "train": {
+      "trainable": 0.0,
+      "trainable_fraction": 0.0
+    },
+    "eval": {
+      "n_eval": 2.0,
+      "n_valid": 2.0,
+      "nmse": 0.5287199676314073,
+      "r2": 0.3556953882290161,
+      "var_f1": 1.0,
+      "sym_rate": 0.0,
+      "mean_time_sec": 11.298260569572449,
+      "total_time_sec": 22.596521139144897
+    },
+    "per_problem": [
+      {
+        "eq_id": "act_test_18",
+        "pred": "x_2 + cos(x_1/x_2) - 0.998391412561642",
+        "true": "(2.5)*x_2**(4.0)/((0.6)**(4.0)+x_2**(4.0))-(0.7)*x_1",
+        "elapsed_sec": 9.705705165863037,
+        "bfgs_loss": 0.7650054693222046,
+        "reward": 0.8277643413567792,
+        "mcts_steps": 11,
+        "sample_times": 1,
+        "nmse": 0.364924193800019,
+        "nmse_var": 0.589579795599483,
+        "r2": 0.41042020440051696,
+        "var_precision": 1.0,
+        "var_recall": 1.0,
+        "var_f1": 1.0,
+        "complexity": 13.0,
+        "valid_pred": 1.0,
+        "sym_exact": 0.0,
+        "sym_skeleton": 0.0,
+        "sym_equiv": 0.0,
+        "sym_recovery": 0.0
+      },
+      {
+        "eq_id": "act_test_19",
+        "pred": "-0.16292864283347*(x_1 - x_2)*cos(2.52681770759749*x_1)",
+        "true": "(0.8)*x_2**(3.0)/((2.0)**(3.0)+x_2**(3.0))-(0.2)*x_1",
+        "elapsed_sec": 12.89081597328186,
+        "bfgs_loss": 0.05547058954834938,
+        "reward": 0.6850128591125142,
+        "mcts_steps": 13,
+        "sample_times": 1,
+        "nmse": 0.6925157414627956,
+        "nmse_var": 0.6990294279424848,
+        "r2": 0.3009705720575152,
+        "var_precision": 1.0,
+        "var_recall": 1.0,
+        "var_f1": 1.0,
+        "complexity": 18.0,
+        "valid_pred": 1.0,
+        "sym_exact": 0.0,
+        "sym_skeleton": 0.0,
+        "sym_equiv": 0.0,
+        "sym_recovery": 0.0
+      }
+    ],
+    "elapsed_sec": 27.174867630004883
+  },
+  {
+    "condition": "selective_beam",
+    "finetune": "selective",
+    "decode": "beam",
+    "layers": [
+      "decoder_0",
+      "decoder_4",
+      "encoder_0"
+    ],
+    "train": {
+      "final_loss": 0.23374042212963103,
+      "trainable": 6702080.0,
+      "total": 26395708.0,
+      "epochs": 5.0,
+      "trainable_fraction": 0.25390794594333294
+    },
+    "eval": {
+      "n_eval": 2.0,
+      "n_valid": 2.0,
+      "nmse": 0.1933314857267941,
+      "r2": 0.7001519998248883,
+      "var_f1": 1.0,
+      "sym_rate": 0.0,
+      "mean_time_sec": 4.042169570922852,
+      "total_time_sec": 8.084339141845703
+    },
+    "per_problem": [
+      {
+        "eq_id": "act_test_18",
+        "pred": "0.688199930984973*x_2 + 0.22322324086196*cos(3.49296655111373*x_1)",
+        "true": "(2.5)*x_2**(4.0)/((0.6)**(4.0)+x_2**(4.0))-(0.7)*x_1",
+        "elapsed_sec": 4.7360944747924805,
+        "bfgs_loss": 0.7241067290306091,
+        "nmse": 0.34541459972293026,
+        "nmse_var": 0.5580596533791996,
+        "r2": 0.4419403466208004,
+        "var_precision": 1.0,
+        "var_recall": 1.0,
+        "var_f1": 1.0,
+        "complexity": 14.0,
+        "valid_pred": 1.0,
+        "sym_exact": 0.0,
+        "sym_skeleton": 0.0,
+        "sym_equiv": 0.0,
+        "sym_recovery": 0.0
+      },
+      {
+        "eq_id": "act_test_19",
+        "pred": "-0.223819137245444*(x_1 - x_2)*cos(9.60193195833278e-8*x_1)",
+        "true": "(0.8)*x_2**(3.0)/((2.0)**(3.0)+x_2**(3.0))-(0.2)*x_1",
+        "elapsed_sec": 3.3482446670532227,
+        "bfgs_loss": 0.003303999314084649,
+        "nmse": 0.04124837173065795,
+        "nmse_var": 0.04163634697102383,
+        "r2": 0.9583636530289762,
+        "var_precision": 1.0,
+        "var_recall": 1.0,
+        "var_f1": 1.0,
+        "complexity": 21.0,
+        "valid_pred": 1.0,
+        "sym_exact": 0.0,
+        "sym_skeleton": 0.0,
+        "sym_equiv": 0.0,
+        "sym_recovery": 0.0
+      }
+    ],
+    "elapsed_sec": 11.894960403442383
+  },
+  {
+    "condition": "selective_tpsr",
+    "finetune": "selective",
+    "decode": "tpsr",
+    "layers": [
+      "decoder_0",
+      "decoder_4",
+      "encoder_0"
+    ],
+    "train": {
+      "final_loss": 0.23374042212963103,
+      "trainable": 6702080.0,
+      "total": 26395708.0,
+      "epochs": 5.0,
+      "trainable_fraction": 0.25390794594333294
+    },
+    "eval": {
+      "n_eval": 2.0,
+      "n_valid": 2.0,
+      "nmse": 0.08242850313918879,
+      "r2": 0.8793293712251347,
+      "var_f1": 1.0,
+      "sym_rate": 0.0,
+      "mean_time_sec": 6.771962285041809,
+      "total_time_sec": 13.543924570083618
+    },
+    "per_problem": [
+      {
+        "eq_id": "act_test_18",
+        "pred": "0.69332749034719*x_2 + 0.966106580115707*cos(1.14899575303894*x_1)",
+        "true": "(2.5)*x_2**(4.0)/((0.6)**(4.0)+x_2**(4.0))-(0.7)*x_1",
+        "elapsed_sec": 6.37286114692688,
+        "bfgs_loss": 0.25912582874298096,
+        "reward": 0.9851125569367658,
+        "mcts_steps": 11,
+        "sample_times": 1,
+        "nmse": 0.12360863454710394,
+        "nmse_var": 0.19970491057808548,
+        "r2": 0.8002950894219145,
+        "var_precision": 1.0,
+        "var_recall": 1.0,
+        "var_f1": 1.0,
+        "complexity": 14.0,
+        "valid_pred": 1.0,
+        "sym_exact": 0.0,
+        "sym_skeleton": 0.0,
+        "sym_equiv": 0.0,
+        "sym_recovery": 0.0
+      },
+      {
+        "eq_id": "act_test_19",
+        "pred": "-0.22381908480071*(x_1 - x_2)*cos(1.59512957746176e-6*x_1)",
+        "true": "(0.8)*x_2**(3.0)/((2.0)**(3.0)+x_2**(3.0))-(0.2)*x_1",
+        "elapsed_sec": 7.171063423156738,
+        "bfgs_loss": 0.003303999314084649,
+        "reward": 1.0545621335570943,
+        "mcts_steps": 13,
+        "sample_times": 1,
+        "nmse": 0.041248371731273645,
+        "nmse_var": 0.04163634697164532,
+        "r2": 0.9583636530283547,
+        "var_precision": 1.0,
+        "var_recall": 1.0,
+        "var_f1": 1.0,
+        "complexity": 21.0,
+        "valid_pred": 1.0,
+        "sym_exact": 0.0,
+        "sym_skeleton": 0.0,
+        "sym_equiv": 0.0,
+        "sym_recovery": 0.0
+      }
+    ],
+    "elapsed_sec": 15.749526262283325
+  }
+]

@@ -9,3 +9,6 @@ TPSR
 https://arxiv.org/pdf/2303.06833
 ソースコード
 https://github.com/deep-symbolic-mathematics/tpsr
+
+dream
+https://gnw.sourceforge.net/dreamchallenge.html

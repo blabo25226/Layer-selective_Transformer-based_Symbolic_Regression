@@ -40,6 +40,11 @@ def instantiate_expr(ds: SampledDataset) -> str:
         ti = target_idx + 1
         ri = repressors[target_idx] + 1
         return f"({p['alpha']})/(1+x_{ri}**({p['n']}))-({p['beta']})*x_{ti}"
+    if fam == "dreamlike":
+        # Numeric expression stored in motif at problem build time
+        if ds.spec.motif and ("x_" in ds.spec.motif or ds.spec.motif[0].isdigit() or ds.spec.motif.startswith("(")):
+            return ds.spec.motif
+        return ds.spec.target_expr
     raise ValueError(fam)
 
 
