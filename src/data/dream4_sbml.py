@@ -1,5 +1,4 @@
 """Parse DREAM4 GNW SBML and reconstruct teacher ODEs for supervised FT.
-
 DREAM4 SBML kineticLaws store parameters but not MathML. We reconstruct
 GeneNetWeaver-style activation from reaction names + Hill parameters:
 
@@ -405,4 +404,3 @@ def mix_supervised_and_trajectory(
     X = np.vstack([X_rand, Xm])
     Y = np.vstack([Y_rand, Y_traj])
     return X, Y
-
