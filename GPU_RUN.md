@@ -51,6 +51,7 @@ python -m pytest -q
 
 ```bash
 RUN_ID=gpu_smoke NPS=2 SEEDS="0 1" EPOCHS=1 EVAL_LIMIT=2 \
+LR_GRID="1e-4" EPOCH_GRID="1" PATIENCE=0 \
 BEAM=1 BFGS_RESTARTS=1 BFGS_STOP=0.2 NOISE="0.0" PYSR=0 \
 bash scripts/run_gpu_pipeline.sh
 ```
@@ -61,12 +62,18 @@ bash scripts/run_gpu_pipeline.sh
 
 ```bash
 RUN_ID=paper_gpu_01 SEEDS="0 1 2 3 4" NPS=24 EPOCHS=8 \
+LR_GRID="1e-5 3e-5 1e-4" EPOCH_GRID="4 8" PATIENCE=2 \
 BEAM=5 BFGS_RESTARTS=5 BFGS_STOP=2.0 PYSR=1 \
 bash scripts/run_gpu_pipeline.sh
 ```
 
-主な調整項目は`SEEDS`、`NPS`、`EPOCHS`、`BEAM`、`BFGS_RESTARTS`、`BFGS_STOP`、
-`NOISE`、`PYSR`である。BFGSは主にCPUを使うため、最初から最大設定にせずsmoke testの時間から
+`LR_GRID`と`EPOCH_GRID`は、各trainable条件へ同じ候補数を与えるvalidation探索である。
+各候補は同じseedとデータ順で学習し、validation CEが最良の重みだけを独立testで一度評価する。
+`PATIENCE`はearly stoppingの待機epoch数であり、0でも全epoch中の最良validation重みを復元する。
+
+主な調整項目は`SEEDS`、`NPS`、`EPOCHS`、`LR_GRID`、`EPOCH_GRID`、`PATIENCE`、
+`BEAM`、`BFGS_RESTARTS`、`BFGS_STOP`、`NOISE`、`PYSR`である。
+BFGSは主にCPUを使うため、最初から最大設定にせずsmoke testの時間から
 全体時間を見積もる。
 
 ## 6. 出力
@@ -76,6 +83,11 @@ results/runs/<run-id>/
   manifest.json
   logs/
   phase4_multiseed/
+    raw_scores_seed*.json
+    absolute_improvements_seed*.json
+    contribution_status_seed*.json
+    contribution_status_aggregate.json
+    tuning_seed*.json
   phase5/
   phase6_noise/
   phase8_lodo/
@@ -93,7 +105,12 @@ manifestにはgit branch/commit、Python、PyTorch、CUDA、GPU、checkpoint SHA
 ## 7. 結果を採用する条件
 
 - Phase 4はvalidationのみで層を選択し、testを使用していない。
+- 各trainable条件は同じLR×epoch候補数で探索され、選択基準はvalidation CEだけである。
+- `phase4_multiseed/contribution_status_aggregate.json`で、full FTがpretrainedを改善したseed数を確認する。
+- full FTが全seedで改善しない指標は正規化寄与度へ使わず、`absolute_improvements_seed*.json`を参照する。
+- 有効なlive Phase 4順位が作れない場合、Phase 5は古いCPU順位へfallbackせず停止する。
 - Phase 5は`phase4_multiseed/contrib_aggregate.json`から層を選ぶ。
+- Phase 5のtest結果を見てLR、epoch、top-kを選び直さない。
 - valid prediction rateとfailure-penalized NMSEを方法間で比較する。
 - DREAM4は有限差分前にtrajectory単位で分割する。
 - 少数seed/donorの95% CIはStudentのt区間として解釈する。
