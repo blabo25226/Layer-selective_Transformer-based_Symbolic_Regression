@@ -2,7 +2,43 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence
+import math
+from typing import Dict, Iterable, List, Mapping, Optional
+
+
+def reference_improves(
+    base: float,
+    full: float,
+    *,
+    higher_is_better: bool,
+    min_improvement: float = 1e-12,
+) -> bool:
+    """Whether full FT improves on pretrained in the metric's direction."""
+    if not (math.isfinite(base) and math.isfinite(full)):
+        return False
+    improvement = full - base if higher_is_better else base - full
+    return improvement > min_improvement
+
+
+def absolute_improvements(
+    scores: Mapping[str, float],
+    *,
+    base_key: str = "pretrained",
+    higher_is_better: bool = True,
+    skip_keys: Optional[Iterable[str]] = None,
+) -> Dict[str, float]:
+    """Return signed raw improvements over pretrained without full-FT scaling."""
+    if base_key not in scores:
+        raise KeyError(f"Need '{base_key}' in scores")
+    base = float(scores[base_key])
+    skip = set(skip_keys) if skip_keys is not None else {base_key}
+    out: Dict[str, float] = {}
+    for name, value in scores.items():
+        if name in skip:
+            continue
+        value = float(value)
+        out[name] = value - base if higher_is_better else base - value
+    return out
 
 
 def contribution_higher_better(s_k: float, s_base: float, s_full: float) -> float:
@@ -28,6 +64,8 @@ def compute_contributions(
     full_key: str = "all_params",
     higher_is_better: bool = True,
     skip_keys: Optional[Iterable[str]] = None,
+    require_full_improvement: bool = True,
+    min_improvement: float = 1e-12,
 ) -> Dict[str, float]:
     """
     Compute layer contribution for every condition in `scores`.
@@ -39,6 +77,17 @@ def compute_contributions(
     skip = set(skip_keys) if skip_keys is not None else {base_key, full_key}
     s_base = float(scores[base_key])
     s_full = float(scores[full_key])
+    if require_full_improvement and not reference_improves(
+        s_base,
+        s_full,
+        higher_is_better=higher_is_better,
+        min_improvement=min_improvement,
+    ):
+        return {
+            name: float("nan")
+            for name in scores
+            if name not in skip
+        }
     out: Dict[str, float] = {}
     for name, val in scores.items():
         if name in skip:

@@ -31,12 +31,15 @@ from evaluation.aggregation import (  # noqa: E402
 )
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from evaluation.layer_contribution import (  # noqa: E402
+    absolute_improvements,
     compute_contributions,
     rank_by_contribution,
+    reference_improves,
 )
 from models.layer_selector import get_layer_registry  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
-from training.single_layer import clone_model, train_selective  # noqa: E402
+from training.single_layer import clone_model  # noqa: E402
+from training.tuning import build_config_grid, seed_everything, tune_selective  # noqa: E402
 from experiment_runtime import phase_output_paths  # noqa: E402
 
 DATA_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
@@ -141,6 +144,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr-grid", type=float, nargs="+", default=None)
+    parser.add_argument("--epoch-grid", type=int, nargs="+", default=None)
+    parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument("--min-delta", type=float, default=1e-4)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-points", type=int, default=80)
     parser.add_argument("--eval-limit", type=int, default=0, help="0 = all test problems")
@@ -200,12 +208,6 @@ def main() -> int:
         log("No tokenizable train equations.")
         return 1
 
-    loader = DataLoader(
-        train_ds,
-        batch_size=min(args.batch_size, len(train_ds)),
-        shuffle=True,
-        collate_fn=collate_finetune,
-    )
     val_loader = DataLoader(
         val_ds,
         batch_size=min(args.batch_size, max(len(val_ds), 1)),
@@ -220,13 +222,28 @@ def main() -> int:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     results: List[Dict[str, Any]] = []
+    tuning_configs = build_config_grid(
+        args.lr_grid or [args.lr],
+        args.epoch_grid or [args.epochs],
+        patience=args.patience,
+        min_delta=args.min_delta,
+    )
 
     for name, layers in conditions.items():
         log(f"\n=== Condition: {name} | layers={layers} ===")
         t0 = time.time()
-        model = clone_model(base_model)
+        def train_loader_factory():
+            return DataLoader(
+                train_ds,
+                batch_size=min(args.batch_size, len(train_ds)),
+                shuffle=True,
+                collate_fn=collate_finetune,
+                generator=torch.Generator().manual_seed(args.seed),
+            )
 
         if name == "pretrained" or layers == []:
+            seed_everything(args.seed)
+            model = clone_model(base_model)
             train_info = {
                 "final_loss": float("nan"),
                 "trainable": 0.0,
@@ -234,15 +251,18 @@ def main() -> int:
                 "epochs": 0.0,
                 "trainable_fraction": 0.0,
             }
+            tuning = None
         else:
-            train_info = train_selective(
-                model,
-                loader,
+            model, tuning = tune_selective(
+                base_model,
+                train_loader_factory,
+                val_loader,
                 layers,
-                epochs=args.epochs,
-                lr=args.lr,
+                tuning_configs,
                 device=device,
+                seed=args.seed,
             )
+            train_info = tuning["train"]
 
         model.eval()
         val_ce = eval_ce_loss(model, val_loader, device) if len(val_ds) else float("nan")
@@ -254,6 +274,7 @@ def main() -> int:
             "condition": name,
             "layers": layers,
             "train": train_info,
+            "tuning": tuning,
             "eval": agg,
             "per_problem": decoded["per_problem"],
             "elapsed_sec": elapsed,
@@ -295,12 +316,27 @@ def main() -> int:
     ]
 
     contrib_tables: Dict[str, Dict[str, float]] = {}
+    raw_scores: Dict[str, Dict[str, float]] = {}
+    absolute_tables: Dict[str, Dict[str, float]] = {}
+    contribution_status: Dict[str, Dict[str, object]] = {}
     for key, higher, _desc in metric_specs:
         scores = {}
         for r in results:
             scores[r["condition"]] = float(r["eval"].get(key, float("nan")))
         if "pretrained" not in scores or "all_params" not in scores:
             continue
+        raw_scores[key] = scores
+        absolute_tables[key] = absolute_improvements(scores, higher_is_better=higher)
+        base = scores["pretrained"]
+        full = scores["all_params"]
+        contribution_status[key] = {
+            "base": base,
+            "full": full,
+            "higher_is_better": higher,
+            "full_improves_base": reference_improves(
+                base, full, higher_is_better=higher
+            ),
+        }
         try:
             contrib_tables[key] = compute_contributions(
                 scores, higher_is_better=higher
@@ -312,6 +348,14 @@ def main() -> int:
     contrib_path.write_text(
         json.dumps(_sanitize(contrib_tables), indent=2), encoding="utf-8"
     )
+    for filename, payload in (
+        ("raw_scores.json", raw_scores),
+        ("absolute_improvements.json", absolute_tables),
+        ("contribution_status.json", contribution_status),
+    ):
+        (OUT_DIR / filename).write_text(
+            json.dumps(_sanitize(payload), indent=2), encoding="utf-8"
+        )
 
     # Report
     lines = [
@@ -320,7 +364,8 @@ def main() -> int:
         f"- Train FT examples: {len(train_ds)} (Phase 1 train)",
         f"- Validation problems: {len(validation_problems)} (held out by motif from training)",
         "- Test split is not used in Phase 4 layer selection.",
-        f"- Epochs: {args.epochs}, lr: {args.lr}",
+        f"- Validation tuning grid: lr={args.lr_grid or [args.lr]}, "
+        f"epochs={args.epoch_grid or [args.epochs]}, patience={args.patience}",
         f"- Decode: beam={args.beam_size}, BFGS restarts={args.bfgs_restarts}, "
         f"stop_time={args.bfgs_stop_time}s",
         f"- Device: `{device}`",
@@ -351,6 +396,8 @@ def main() -> int:
             "- Lower-better: `C = (L_base - L_k) / (L_base - L_full)`",
             "",
             "`S_base` / `L_base` = `pretrained`, `S_full` / `L_full` = `all_params`.",
+            "If full FT does not improve on pretrained, normalized C is undefined and "
+            "the saved absolute improvement must be used instead.",
             "",
         ]
     )
