@@ -24,11 +24,13 @@ export LTSR_CONFIG=${LTSR_CONFIG:-"$PWD/NSRS/jupyter/100M/config.yaml"}
 export LTSR_EQ_SETTING=${LTSR_EQ_SETTING:-"$PWD/NSRS/jupyter/100M/eq_setting.json"}
 RUN_ID=${RUN_ID:-"$(date -u +%Y%m%dT%H%M%SZ)_$(git rev-parse --short HEAD)"}
 export LTSR_RUN_DIR=${LTSR_RUN_DIR:-"$PWD/results/runs/$RUN_ID"}
+export LTSR_GRAPH_DIR=${LTSR_GRAPH_DIR:-"$PWD/graphs/$RUN_ID"}
 DATA=results/synthetic/diverse_gpu
 
 "${PY_CMD[@]}" scripts/preflight_gpu.py \
   --weights "$LTSR_WEIGHTS" --config "$LTSR_CONFIG" --eq-setting "$LTSR_EQ_SETTING"
 mkdir -p "$LTSR_RUN_DIR/logs"
+mkdir -p "$LTSR_GRAPH_DIR/figures" "$LTSR_GRAPH_DIR/tables"
 exec > >(tee "$LTSR_RUN_DIR/logs/pipeline.log") 2>&1
 "${PY_CMD[@]}" scripts/run_manifest.py start --run-dir "$LTSR_RUN_DIR" \
   --weights "$LTSR_WEIGHTS" --command "$0 $*"
