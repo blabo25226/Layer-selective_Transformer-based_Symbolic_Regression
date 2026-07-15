@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import random
 import sys
 import time
 from pathlib import Path
@@ -32,8 +31,10 @@ from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E40
 from training.selective_layers import (  # noqa: E402
     build_phase5_conditions,
     load_phase4_ranking,
+    usable_ranking_metrics,
 )
-from training.single_layer import clone_model, train_selective  # noqa: E402
+from training.single_layer import clone_model  # noqa: E402
+from training.tuning import build_config_grid, seed_everything, tune_selective  # noqa: E402
 from experiment_runtime import phase_output_paths  # noqa: E402
 
 DATA_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
@@ -141,6 +142,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr-grid", type=float, nargs="+", default=None)
+    parser.add_argument("--epoch-grid", type=int, nargs="+", default=None)
+    parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument("--min-delta", type=float, default=1e-4)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-points", type=int, default=80)
     parser.add_argument("--eval-limit", type=int, default=0, help="0 = all test")
@@ -158,7 +163,12 @@ def main() -> int:
         "--contributions",
         default=str(PHASE4_CONTRIB),
         help="Phase 4 contributions.json to derive the ranking from "
-        "(falls back to frozen constant if missing)",
+        "(live output is required unless fallback is explicitly allowed)",
+    )
+    parser.add_argument(
+        "--allow-fallback-ranking",
+        action="store_true",
+        help="Allow the frozen CPU-pilot ranking when live Phase-4 output is invalid",
     )
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
@@ -176,6 +186,16 @@ def main() -> int:
     log(f"Device: {device} | data: {data_dir}")
 
     ranking, ranking_source = load_phase4_ranking(Path(args.contributions), args.ranking)
+    if ranking_source == "fallback" and not args.allow_fallback_ranking:
+        log(
+            "ERROR: live Phase-4 contribution ranking is missing or invalid. "
+            "Refusing to use the frozen CPU-pilot fallback; fix/tune Phase 4 first."
+        )
+        return 2
+    ranking_metrics: List[str] = []
+    if ranking_source in ("phase4", "phase4_multiseed"):
+        tables = json.loads(Path(args.contributions).read_text(encoding="utf-8"))
+        ranking_metrics = usable_ranking_metrics(tables, args.ranking)
     if ranking_source in ("phase4", "phase4_multiseed"):
         log(f"Ranking ({args.ranking}) from Phase 4 `{args.contributions}`: {ranking}")
     else:
@@ -230,27 +250,30 @@ def main() -> int:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     results: List[Dict[str, Any]] = []
+    tuning_configs = build_config_grid(
+        args.lr_grid or [args.lr],
+        args.epoch_grid or [args.epochs],
+        patience=args.patience,
+        min_delta=args.min_delta,
+    )
 
     for name, layers in conditions.items():
         log(f"\n=== {name} | layers={layers} ===")
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
-        torch.manual_seed(args.seed)
-        np.random.seed(args.seed)
-        random.seed(args.seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(args.seed)
-        loader = DataLoader(
-            train_ds,
-            batch_size=min(args.batch_size, len(train_ds)),
-            shuffle=True,
-            collate_fn=collate_finetune,
-            generator=torch.Generator().manual_seed(args.seed),
-        )
-        model = clone_model(base_model)
+        def train_loader_factory():
+            return DataLoader(
+                train_ds,
+                batch_size=min(args.batch_size, len(train_ds)),
+                shuffle=True,
+                collate_fn=collate_finetune,
+                generator=torch.Generator().manual_seed(args.seed),
+            )
 
         if name == "pretrained" or layers == []:
+            seed_everything(args.seed)
+            model = clone_model(base_model)
             train_info = {
                 "final_loss": float("nan"),
                 "trainable": 0.0,
@@ -258,15 +281,20 @@ def main() -> int:
                 "epochs": 0.0,
                 "trainable_fraction": 0.0,
             }
+            tuning = None
         else:
-            train_info = train_selective(
-                model,
-                loader,
+            model, tuning = tune_selective(
+                base_model,
+                train_loader_factory,
+                val_loader,
                 layers,
-                epochs=args.epochs,
-                lr=args.lr,
+                tuning_configs,
                 device=device,
+                seed=args.seed,
             )
+            train_info = tuning["train"]
+
+        loader = train_loader_factory()
 
         model.eval()
         train_ce = (
@@ -287,7 +315,9 @@ def main() -> int:
             "condition": name,
             "layers": layers,
             "ranking": args.ranking,
+            "ranking_metrics": ranking_metrics,
             "train": train_info,
+            "tuning": tuning,
             "train_ce": train_ce,
             "val_ce": val_ce,
             "overfit_gap": gap,
@@ -320,10 +350,12 @@ def main() -> int:
         "",
         f"- Ranking mode: `{args.ranking}` "
         f"({ranking_source if ranking_source != 'fallback' else 'FROZEN FALLBACK'})",
+        f"- Ranking metrics actually used: `{', '.join(ranking_metrics) or 'frozen fallback'}`",
         f"- Order: `{', '.join(ranking)}`",
         f"- k={args.k} for middle / random / bottom",
         f"- Train FT: {len(train_ds)}; test eval: {len(test_problems)}",
-        f"- Epochs: {args.epochs}, lr: {args.lr}",
+        f"- Validation tuning grid: lr={args.lr_grid or [args.lr]}, "
+        f"epochs={args.epoch_grid or [args.epochs]}, patience={args.patience}",
         f"- Decode: beam={args.beam_size}, BFGS restarts={args.bfgs_restarts}, "
         f"stop_time={args.bfgs_stop_time}s",
         f"- Device: `{device}`",
@@ -384,10 +416,10 @@ def main() -> int:
             lk = float(r["val_ce"])
             nk = float(r["eval"]["penalized_nmse"])
             c_ce = (
-                (l_base - lk) / (l_base - l_full) if abs(l_base - l_full) > 1e-12 else float("nan")
+                (l_base - lk) / (l_base - l_full) if l_full < l_base - 1e-12 else float("nan")
             )
             c_nmse = (
-                (n_base - nk) / (n_base - n_full) if abs(n_base - n_full) > 1e-12 else float("nan")
+                (n_base - nk) / (n_base - n_full) if n_full < n_base - 1e-12 else float("nan")
             )
             frac = float(r["train"].get("trainable_fraction", 0.0))
             lines.append(

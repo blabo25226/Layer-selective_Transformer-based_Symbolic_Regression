@@ -18,6 +18,7 @@ from training.selective_layers import (  # noqa: E402
     middle_k,
     random_k,
     ranking_from_contributions,
+    usable_ranking_metrics,
     top_k,
 )
 
@@ -101,3 +102,13 @@ def test_load_multiseed_aggregate_ranking(tmp_path):
     ranking, source = load_phase4_ranking(p, "accuracy")
     assert source == "phase4_multiseed"
     assert ranking[0] == "encoder_2"
+
+
+def test_undefined_metric_is_excluded_from_accuracy_ranking():
+    tables = {
+        "val_ce": {"decoder_4": 0.9, "encoder_2": 0.2},
+        "penalized_nmse": {"decoder_4": None, "encoder_2": None},
+        "penalized_r2": {"decoder_4": None, "encoder_2": None},
+    }
+    assert usable_ranking_metrics(tables, "accuracy") == ["val_ce"]
+    assert ranking_from_contributions(tables, "accuracy")[0] == "decoder_4"

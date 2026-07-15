@@ -9,6 +9,9 @@ SEEDS=${SEEDS:-"0 1 2 3 4"}
 NPS=${NPS:-24}
 EVAL_LIMIT=${EVAL_LIMIT:-0}
 EPOCHS=${EPOCHS:-8}
+LR_GRID=${LR_GRID:-"1e-5 3e-5 1e-4"}
+EPOCH_GRID=${EPOCH_GRID:-"4 8"}
+PATIENCE=${PATIENCE:-2}
 BEAM=${BEAM:-5}
 BFGS_RESTARTS=${BFGS_RESTARTS:-5}
 BFGS_STOP=${BFGS_STOP:-2.0}
@@ -17,6 +20,7 @@ PYSR=${PYSR:-1}
 
 export LTSR_SEEDS="$SEEDS" LTSR_N_PER_SKELETON="$NPS" LTSR_EVAL_LIMIT="$EVAL_LIMIT"
 export LTSR_EPOCHS="$EPOCHS" LTSR_BEAM="$BEAM" LTSR_BFGS_RESTARTS="$BFGS_RESTARTS"
+export LTSR_LR_GRID="$LR_GRID" LTSR_EPOCH_GRID="$EPOCH_GRID" LTSR_PATIENCE="$PATIENCE"
 export LTSR_BFGS_STOP="$BFGS_STOP" LTSR_NOISE="$NOISE" LTSR_PYSR="$PYSR"
 
 : "${LTSR_WEIGHTS:?Set LTSR_WEIGHTS to the GPU checkpoint path}"
@@ -44,6 +48,7 @@ trap 'finish_manifest $?' EXIT
 
 echo "Run directory: $LTSR_RUN_DIR"
 echo "Seeds=$SEEDS n_per_skeleton=$NPS epochs=$EPOCHS beam=$BEAM"
+echo "Validation tuning: lr_grid=$LR_GRID epoch_grid=$EPOCH_GRID patience=$PATIENCE"
 
 "${PY_CMD[@]}" scripts/generate_diverse_suite.py --n-per-skeleton "$NPS" \
   --noise $NOISE --tag diverse_gpu --out-root results/synthetic
@@ -51,6 +56,7 @@ echo "Seeds=$SEEDS n_per_skeleton=$NPS epochs=$EPOCHS beam=$BEAM"
 # Phase 4 layer selection uses validation only; test remains untouched.
 "${PY_CMD[@]}" scripts/phase4_multiseed.py --data-dir "$DATA" --seeds $SEEDS \
   --epochs "$EPOCHS" --eval-limit "$EVAL_LIMIT" --beam-size "$BEAM" \
+  --lr-grid $LR_GRID --epoch-grid $EPOCH_GRID --patience "$PATIENCE" \
   --bfgs-restarts "$BFGS_RESTARTS" --bfgs-stop-time "$BFGS_STOP"
 
 CONTRIB="$LTSR_RUN_DIR/phase4_multiseed/contrib_aggregate.json"
@@ -58,6 +64,7 @@ for seed in $SEEDS; do
   LTSR_PHASE_TAG="seed${seed}" "${PY_CMD[@]}" scripts/phase5_selective_train.py \
     --data-dir "$DATA" --contributions "$CONTRIB" --seed "$seed" \
     --epochs "$EPOCHS" --eval-limit "$EVAL_LIMIT" --beam-size "$BEAM" \
+    --lr-grid $LR_GRID --epoch-grid $EPOCH_GRID --patience "$PATIENCE" \
     --bfgs-restarts "$BFGS_RESTARTS" --bfgs-stop-time "$BFGS_STOP"
 done
 "${PY_CMD[@]}" scripts/aggregate_phase5_runs.py --run-dir "$LTSR_RUN_DIR" \

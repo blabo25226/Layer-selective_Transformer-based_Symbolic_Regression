@@ -67,6 +67,38 @@ FALLBACK_RANKINGS: Dict[str, List[str]] = {
 }
 
 
+def usable_ranking_metrics(
+    contrib_tables: Mapping[str, Mapping[str, float]], mode: str = "accuracy"
+) -> List[str]:
+    """Return the finite contribution metrics that can drive a ranking."""
+    if mode not in RANKING_METRICS:
+        raise ValueError(f"Unknown ranking mode {mode!r}; use {list(RANKING_METRICS)}")
+
+    def _has_finite_score(table: Mapping[str, object]) -> bool:
+        for value in table.values():
+            if isinstance(value, Mapping):
+                value = value.get("mean", float("nan"))
+            try:
+                if value is not None and math.isfinite(float(value)):
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    metrics = [
+        m for m in RANKING_METRICS[mode]
+        if m in contrib_tables and _has_finite_score(contrib_tables[m])
+    ]
+    if mode == "accuracy" and len(metrics) == 1 and "val_ce" in metrics:
+        legacy = [
+            m for m in ("val_ce", "nmse", "r2")
+            if m in contrib_tables and _has_finite_score(contrib_tables[m])
+        ]
+        if len(legacy) > 1:
+            metrics = legacy
+    return metrics
+
+
 def ranking_from_contributions(
     contrib_tables: Mapping[str, Mapping[str, float]],
     mode: str = "accuracy",
@@ -79,13 +111,7 @@ def ranking_from_contributions(
     (``accuracy``) we average each layer's per-metric rank (NaN → worst rank)
     and sort ascending mean rank. ``pretrained`` / ``all_params`` are excluded.
     """
-    if mode not in RANKING_METRICS:
-        raise ValueError(f"Unknown ranking mode {mode!r}; use {list(RANKING_METRICS)}")
-    metrics = [m for m in RANKING_METRICS[mode] if m in contrib_tables]
-    if mode == "accuracy" and len(metrics) == 1 and "val_ce" in metrics:
-        legacy = [m for m in ("val_ce", "nmse", "r2") if m in contrib_tables]
-        if len(legacy) > 1:
-            metrics = legacy
+    metrics = usable_ranking_metrics(contrib_tables, mode)
     if not metrics:
         raise KeyError(
             f"None of {RANKING_METRICS[mode]} present in contributions "
