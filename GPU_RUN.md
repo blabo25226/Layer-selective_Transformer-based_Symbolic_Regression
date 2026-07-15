@@ -80,10 +80,15 @@ results/runs/<run-id>/
   phase6_noise/
   phase8_lodo/
   reports/
+
+graphs/<run-id>/
+  figures/
+  tables/
 ```
 
 manifestにはgit branch/commit、Python、PyTorch、CUDA、GPU、checkpoint SHA256、主要な環境変数、
 開始・終了時刻、成否が保存される。途中でコマンドが失敗するとpipelineは停止し、statusは`failed`になる。
+独立した図と表は、runに対応する`graphs/<run-id>/`へ保存する。
 
 ## 7. 結果を採用する条件
 

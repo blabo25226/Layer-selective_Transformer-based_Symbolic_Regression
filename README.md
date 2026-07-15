@@ -324,6 +324,7 @@ scripts/       Phase別の実験エントリポイント
 tests/         単体テスト
 requirements/  CPU/GPU/dev別の依存関係
 results/       CPU pilotの結果とrun出力
+graphs/        run別の独立した図・表
 NSRS/          NeSymReS参照実装
 TPSR/          TPSR参照実装
 ```
