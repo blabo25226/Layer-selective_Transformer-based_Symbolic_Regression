@@ -105,7 +105,7 @@ $$
 という形を人間が先に決め、 $w_0,w_1,w_2$ を求める。一方、**シンボリック回帰（Symbolic Regression; SR）** は、
 係数だけでなく、足し算、掛け算、割り算、べき乗、三角関数などの組合せも探索する。
 
-データ集合を $D=\{(\mathbf{x}_i,y_i)\}_{i=1}^{N}$ 、使える数式の集合を $\mathcal{F}$ とすると、概念的には
+データ集合を $`D=\{(\mathbf{x}_i,y_i)\}_{i=1}^{N}`$ 、使える数式の集合を $\mathcal{F}$ とすると、概念的には
 
 $$
 f^*=\underset{f\in\mathcal{F}}{\mathrm{arg\,min}}\left[\frac{1}{N}\sum_{i=1}^{N}\bigl(y_i-f(\mathbf{x}_i)\bigr)^2+\lambda C(f)\right]
@@ -360,16 +360,16 @@ GPU本実験ではPython 3.10または3.11を使用する。
 
 - NeSymReSは、入力データの真の関係
 
-  $$
-  y=x_1\sin(x_1)
-  $$
+$$
+y=x_1\sin(x_1)
+$$
 
   を同値な式として復元した。
 - PySRの出力も
 
-  $$
-  \hat y=x\sin(x)
-  $$
+$$
+\hat y=x\sin(x)
+$$
 
   となった。
 - TPSR E2EモデルをWindows/CPU上でロードし、軽量MCTSを完走した。
