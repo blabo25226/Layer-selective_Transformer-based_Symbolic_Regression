@@ -212,12 +212,13 @@ f(x)=x^2
 
 #### TeXコマンド
 
-このREADMEのGitHub表示では `\operatorname{...}` がレンダリングエラーの原因になったため使用しない。
-演算子名やローマン体のラベルには `\mathrm{...}` を使う。
+このREADMEのGitHub表示では、バックスラッシュ付きの `operatorname` コマンドがレンダリングエラーの原因になったため、
+READMEでは一切使用しない。演算子名やローマン体のラベルには `\mathrm{...}` を使う。
+新規追加だけでなく、編集後のREADME全体で禁止コマンドの残存が0件であることを確認する。
 
 ```text
 Good: \mathrm{NMSE}, \mathrm{softmax}, \mathrm{arg\,min}
-Avoid: \operatorname{NMSE}, \operatorname{softmax}, \operatorname{argmin}
+Avoid: operatorname系コマンドによる演算子名の記述
 ```
 
 新しいTeXコマンドを追加するときは、GitHubのMathJaxで実際にレンダリングできるか確認する。
@@ -239,11 +240,13 @@ Avoid: これは**シンボリック回帰（SR）**の説明である。
 最低限、次を検索する。
 
 ```bash
-rg -n '\\operatorname|\\operatename|^\$\$$' README.md
+rg -n '\\' README.md | rg 'operatorname|operatename'
+rg -n '^\$\$$' README.md
 rg -n '\*\*[^*]*(\(|（)[^*]*(\)|）)[^*]*\*\*' README.md
 ```
 
-1つ目の検索結果は原則0件にする。2つ目の検索結果は、太字の外側に必要な空白があるか目視確認する。
+1つ目の禁止コマンド検索は必ず0件にする。2つ目は表示数式の区切りを確認し、
+3つ目は太字の外側に必要な空白があるか目視確認する。
 数式を大きく変更した場合は、GitHub上のREADMEまたはGitHub Markdown APIで、inline/display mathとして認識されることを確認する。
 
 ## 7. 検証手順
