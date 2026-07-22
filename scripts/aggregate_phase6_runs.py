@@ -23,6 +23,20 @@ def safe(value):
     return value
 
 
+def _num(value):
+    """Coerce to float, or None for missing/non-finite metrics.
+
+    A cell with no valid predictions reports metrics such as ``complexity`` as
+    null; _ci95 already drops None/non-finite entries, so keep them as None here
+    instead of crashing on float(None).
+    """
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", type=Path, required=True)
@@ -45,7 +59,7 @@ def main() -> int:
                 "penalized_nmse", "valid_rate", "complexity", "sym_rate",
                 "elapsed_sec", "near_singularity_mean", "extrapolation_valid_mean",
             ):
-                values = [float(run[noise][cell][metric]) for run in runs]
+                values = [_num(run[noise][cell].get(metric)) for run in runs]
                 summary[noise][cell][metric] = {**_ci95(values), "values": values}
     effects = {}
     required = {

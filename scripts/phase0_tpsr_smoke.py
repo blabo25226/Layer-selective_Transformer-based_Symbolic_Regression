@@ -6,8 +6,11 @@ import os
 import pathlib
 import sys
 
-# Linux-trained checkpoints may pickle pathlib.PosixPath.
-pathlib.PosixPath = pathlib.WindowsPath  # type: ignore[misc, assignment]
+# Linux-trained checkpoints may pickle pathlib.PosixPath. This remap is only
+# safe on Windows; on POSIX it makes pathlib.Path() build an unsupported
+# WindowsPath and breaks unrelated imports.
+if os.name == "nt":
+    pathlib.PosixPath = pathlib.WindowsPath  # type: ignore[misc, assignment]
 
 ROOT = Path = __import__("pathlib").Path
 REPO = ROOT(__file__).resolve().parents[1]
