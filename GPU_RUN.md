@@ -563,3 +563,49 @@ Get-Content .\<campaign-id>_full.tar.gz.sha256
 
 Phase 8は4 donorsしかないapplication demoであり、seedを増やしても生物学的独立標本数が増えるわけではない。
 seed間CIとdonor間変動を混同せず、真のヒト制御ODEや因果機構を回復したとは主張しない。
+
+## 付録A. 実際に使用するGPU PCの実測仕様
+
+2026-07-23にGPU PC上で実測した構成である。本文の手順は特定の機種を前提としないが、
+所要時間やVRAMの見積り、`.wslconfig`の設定、archiveの回収計画はこの構成を基準に判断する。
+
+| 項目 | 実測値 |
+|---|---|
+| マザーボード | MSI PRO B760M-A WIFI (MS-7D99) |
+| OS | Windows 11 Pro 10.0.26200 |
+| CPU | Intel Core i7-14700F、20コア（8 P-core + 12 E-core）／28スレッド、L3 33MB |
+| メモリ | 32GB（SK Hynix DDR5-5600 16GB×2） |
+| GPU | NVIDIA GeForce RTX 4070 Ti SUPER |
+| VRAM | 16,376 MiB（16GB GDDR6X） |
+| Compute Capability | 8.9（Ada Lovelace） |
+| NVIDIAドライバ | 591.86（対応CUDA 13.1、WDDM） |
+| GPU電力上限 | 285W |
+| ストレージ | Kingston SNV2S2000G 2TB NVMe SSD **1台のみ**（C:のみ、容量1862GB） |
+| WSL | WSL 2.4.13.0 / kernel 5.15.167.4 |
+
+この構成が本実験に与える含意は次のとおりである。
+
+- **VRAMは制約にならない。** NeSymReSの100Mモデルに対し16GBは十分に余裕があり、§6.1の
+  「VRAM不足のため設定を落とす」判断が必要になる可能性は低い。もし発生した場合も、
+  設定変更は実験条件の変更なので§6.1のとおり人へ確認する。
+- **総wall-clockはCPU側が支配しやすい。** §8.1のとおりBFGSは主にCPUを使い、PySRもCPU並列である。
+  28スレッドはこの部分に効くが、GPU性能から所要時間を外挿してはならない。§8.1の中規模pilotで実測する。
+- **ホストメモリ32GBに対し、WSL2は既定でその50%（約16GB）しか割り当てない。** PySRの並列実行や
+  DREAM4 Size 100を含むrunではこれが上限になり得る。必要なら`%USERPROFILE%\.wslconfig`で
+  `memory`と`processors`を明示する。変更後は`wsl --shutdown`で反映する。
+- **物理ディスクは1台だけである。** したがって§9の`ARCHIVE_DIR=/mnt/research-storage/ltsr`のような
+  別ディスクへの直接archiveはこのPCでは行えない。既定の`results/archives/`へ作成し、
+  §9の`\\tsclient`経由で手元PCへ回収する。回収とSHA256照合が済むまでGPU PC側を削除しない。
+- 電源設定はAC接続時にスリープしない設定になっていることを確認済みである（`powercfg`のAC standby index = 0）。
+  Windows Updateの再起動時間帯は長時間run開始前に別途確認する。
+
+計測に使ったコマンドは次のとおりである（Windows側のPowerShell）。
+
+```powershell
+nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap,power.limit --format=csv
+Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors
+Get-CimInstance Win32_PhysicalMemory | Select-Object Capacity,Speed,Manufacturer
+Get-PhysicalDisk | Select-Object FriendlyName,MediaType,Size,BusType
+powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE
+wsl --status
+```
