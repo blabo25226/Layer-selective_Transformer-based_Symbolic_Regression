@@ -19,7 +19,8 @@ graphs/*_smoke/
 graphs/gpu_smoke_*/
 results/published/*_smoke/
 results/synthetic/_test_tmp/
-.claude/
+.claude/*
+!.claude/settings.json
 
 # Local third-party drops (not vendored; install via pip where applicable)
 /LogicGEP/
