@@ -208,6 +208,66 @@ commitしていない`results/published/<run-id>/`が残っていると起動で
 
 すでに人がsmoke testを完了していれば`RUN_SMOKE=0`にする。まだなら`RUN_SMOKE=1`のままAIへ渡す。
 
+### 6.1 AIへ委任する範囲（事前合意事項）
+
+`run_gpu_campaign.sh`は無人で完走する。一方、AIによる監視は連続的ではない。
+AIは常駐プロセスではなく、人が話しかけたときだけ動く。したがって、
+**「放置して戻れば終わっている」は成立するが、「異常が起きた瞬間にAIが気づいて対処する」は成立しない。**
+tmuxの中の計算はAIのセッションと無関係に走り続けるので、監視の粒度は人が何時間おきに確認するか次第である。
+
+このリポジトリはpublicであり、GPU runの軽量成果物を公開することは合意済みである。したがって
+campaignは`PUBLISH_GIT=1`で起動してよく、AIは検査済み成果物のcommitと現在branchへのpushまで実施してよい。
+公開されるのは`results/published/<run-id>/`と`graphs/<run-id>/`だけであり、raw run、checkpoint、
+取得した外部データは公開されない。
+
+失敗時の再実行について、AIは次の方針で判断する。
+
+**確認せず対処してよいもの**
+
+- smoke testの失敗全般（原因を直して再実行する）
+- 環境・パス・依存関係・シェル記述など、実験設定に影響しない機構的な失敗
+- 明らかなコードのバグで、修正が実験条件を変えないもの
+- archive、`export_run_summary.py`、git push段階の失敗（再計算不要。失敗したステップだけやり直す）
+
+修正後は、作業ツリーをcleanにするため修正をcommitしてから、**新しいcampaign ID**で再実行する。
+古いrun IDへ結果を混ぜてはならない。
+
+**必ず人に確認するもの**
+
+- 実験設定（seed数、epoch、`LR_GRID`、`EPOCH_GRID`、noise水準、`BEAM`、TPSR予算、`NMSE_EQUIV_MARGIN`）の変更
+- 検査基準・採用条件を緩めること。**Phaseを通すために閾値や必須項目を下げてはならない。** 落ちたら落ちたと報告する
+- 完了済みrun、archive、公開済み成果物の削除
+- 同じ原因で3回失敗した場合の続行可否
+- 想定所要時間を大きく超過している場合の続行可否
+- VRAM不足など、設定を落とさないと通らない失敗（設定変更は実験条件の変更であるため）
+
+### 6.2 起動は必ず`tmux`経由で行う（AI実行時の注意）
+
+`.claude/settings.json`はGit管理下にあるため、cloneすればGPU PCでも同じ許可設定が使われる。
+これは、長時間runの最中にAIが許可ダイアログで止まって何時間も無駄にすることを防ぐためである。
+許可しているのはpipeline実行、テスト、Git操作など必要なものだけで、force pushと成果物の一括削除は明示的に禁止している。
+
+そのうえで、**pipelineを§7・§8の形（環境変数の代入で始まる1行）のまま直接実行せず、必ず`tmux`の中で起動する。**
+
+```bash
+# 避ける：許可ルールに一致せず、離席中に確認待ちで停止し得る
+RUN_ID=... NPS=2 ... bash scripts/run_gpu_pipeline.sh
+
+# 推奨：tmuxセッションを作り、その中で上記コマンドを実行する
+tmux new -s ltsr-smoke
+```
+
+許可ルールは`Bash(bash scripts/run_gpu_pipeline.sh)`のようにコマンド名で書かれている。一方、
+§7・§8のコマンドは`RUN_ID=... NPS=2 ... bash scripts/...`と環境変数の代入から始まるため、
+ルールに一致せず確認ダイアログが出る可能性がある（一致判定の詳細な挙動は未確認）。
+`Bash(tmux *)`は許可済みなので、`tmux`の中で起動すればどちらの挙動でも停止しない。
+
+これは元々`tmux`を使う理由（リモートデスクトップを切断しても計算が続く）と同じ手順であり、
+新たな手間は生じない。**§8.1の中規模pilotだけは`tmux`の記述を省略しているので、そこも同様に
+`tmux`セッションを作ってから実行する。**
+
+### 6.3 campaignの起動と進捗確認
+
 ```bash
 CAMPAIGN_ID=paper_gpu_YYYYMMDD_01
 mkdir -p results/runs
@@ -306,6 +366,8 @@ smoke testの所要時間とVRAM使用量を記録し、設定を確定してか
 BFGSは主にCPUを使い、decodeと`EVAL_LIMIT`が総時間を支配しやすい。**本番設定をそのまま流す前に、
 `EVAL_LIMIT=30`程度の中規模runで所要時間とVRAMを測る。** この中規模runはpilotであり、
 これを見てhyperparameterを変更した場合、そのrunは最終test結果の選択には使わない。
+
+このpilotも§6.2のとおり`tmux`セッションを作ってから実行する（`tmux new -s ltsr-pilot`）。
 
 ```bash
 RUN_ID=pilot_gpu_YYYYMMDD_01 SEEDS="0 1" NPS=24 EPOCHS=8 EVAL_LIMIT=30 DREAM4=0 \
