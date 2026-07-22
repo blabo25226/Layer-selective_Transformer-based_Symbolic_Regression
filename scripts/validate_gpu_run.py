@@ -4,8 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from run_manifest import record_stage  # noqa: E402
+
+# The pipeline sets status=complete before the run is checked, so a validation
+# failure here is the only signal that the run must not be published.
+RESUMABLE_STATUSES = {"complete", "validation_failed", "publication_failed"}
 
 REQUIRED_EQUATION_FIELDS = {
     "eq_id",
@@ -93,6 +101,19 @@ def count_per_problem(obj) -> tuple[int, int]:
     return groups, rows
 
 
+def fail(run: Path, errors: list[str]) -> int:
+    """Persist the failure so neither the manifest nor validation.json look healthy."""
+    (run / "validation.json").write_text(
+        json.dumps({"status": "failed", "run_dir": str(run), "errors": errors}, indent=2),
+        encoding="utf-8",
+    )
+    record_stage(run / "manifest.json", "validation", "failed")
+    print("VALIDATION FAILED:", file=sys.stderr)
+    for error in errors:
+        print(f"  - {error}", file=sys.stderr)
+    return 2
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", type=Path, required=True)
@@ -102,11 +123,13 @@ def main() -> int:
     if not manifest_path.is_file():
         parser.error(f"missing manifest: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("status") != "complete":
-        parser.error(f"run is not complete: status={manifest.get('status')}")
+    if manifest.get("status") not in RESUMABLE_STATUSES:
+        parser.error(f"pipeline did not finish: status={manifest.get('status')}")
+    dream4 = manifest.get("parameters", {}).get("LTSR_DREAM4") == "1"
     required = [
         run / "phase4_multiseed" / "contrib_aggregate.json",
         run / "phase4_multiseed" / "absolute_improvements_aggregate.json",
+        run / "phase4_multiseed" / "contribution_status_aggregate.json",
         run / "phase4_multiseed" / "layer_ranking_scores.json",
         run / "phase4_multiseed" / "layer_ranking_metadata.json",
         run / "phase4_multiseed" / "layer_rankings.json",
@@ -116,25 +139,29 @@ def main() -> int:
         run / "phase6_noise_multiseed" / "summary.json",
         run / "phase8_lodo_multiseed" / "summary.json",
     ]
-    if manifest.get("parameters", {}).get("LTSR_DREAM4") == "1":
+    if dream4:
         required.append(run / "phase7_multiseed" / "summary.json")
     seeds = manifest.get("parameters", {}).get("LTSR_SEEDS", "").split()
     for seed in seeds:
         required.extend([
             run / "phase4_multiseed" / f"equations_seed{seed}.json",
+            run / "phase4_multiseed" / f"raw_scores_seed{seed}.json",
+            run / "phase4_multiseed" / f"absolute_improvements_seed{seed}.json",
+            run / "phase4_multiseed" / f"contribution_status_seed{seed}.json",
+            run / "phase4_multiseed" / f"tuning_seed{seed}.json",
             run / f"phase5_seed{seed}" / "selective_results.json",
             run / f"phase6_noise_seed{seed}" / "noise_sweep.json",
             run / f"phase8_lodo_seed{seed}" / "lodo_results.json",
         ])
-        if manifest.get("parameters", {}).get("LTSR_DREAM4") == "1":
+        if dream4:
             required.extend([
                 run / f"phase7_dream4_size10_seed{seed}" / "size10_results.json",
                 run / f"phase7_dream4_size100_seed{seed}" / "size100_results.json",
             ])
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
-        parser.error("missing required outputs: " + ", ".join(missing))
-    json_files = [p for p in run.rglob("*.json") if p.name != "manifest.json"]
+        return fail(run, ["missing required output: " + path for path in missing])
+    json_files = [p for p in run.rglob("*.json") if p.name not in {"manifest.json", "validation.json"}]
     groups = rows = 0
     invalid_json = []
     equation_issues = []
@@ -165,12 +192,12 @@ def main() -> int:
                             record, f"{path.relative_to(run)}:{condition}[{index}]"
                         )
                     )
-    if invalid_json:
-        parser.error("invalid JSON outputs: " + ", ".join(invalid_json))
+    errors = ["invalid JSON output: " + path for path in invalid_json]
     if groups == 0 or rows == 0:
-        parser.error("no per-problem equation records found")
-    if equation_issues:
-        parser.error("invalid equation records: " + "; ".join(equation_issues[:20]))
+        errors.append("no per-problem equation records found")
+    errors.extend("invalid equation record: " + issue for issue in equation_issues[:20])
+    if errors:
+        return fail(run, errors)
     result = {
         "status": "validated",
         "run_dir": str(run),
@@ -181,6 +208,7 @@ def main() -> int:
         "equation_schema": "v1",
     }
     (run / "validation.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    record_stage(run / "manifest.json", "validation", "complete")
     print(json.dumps(result, indent=2))
     return 0
 

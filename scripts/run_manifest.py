@@ -43,6 +43,27 @@ def tree_sha256(path: Path) -> dict:
     }
 
 
+def record_stage(manifest_path: Path, stage: str, status: str) -> dict | None:
+    """Record the outcome of a post-pipeline stage (validation, publication, ...).
+
+    The pipeline itself finishes long before the run is checked and published, so a
+    later failure must still be visible in the manifest. A failed stage moves the
+    top-level status to ``<stage>_failed``; a successful one restores ``complete``.
+    """
+    if not manifest_path.is_file():
+        return None
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stages = data.setdefault("stages", {})
+    stages[stage] = {"status": status, "at_utc": datetime.now(timezone.utc).isoformat()}
+    if status == "failed":
+        data["status"] = f"{stage}_failed"
+    elif data.get("status", "").endswith("_failed"):
+        still_failed = [name for name, info in stages.items() if info.get("status") == "failed"]
+        data["status"] = f"{still_failed[0]}_failed" if still_failed else "complete"
+    manifest_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return data
+
+
 def command_output(command: list[str]) -> str | None:
     try:
         return subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL).strip()
@@ -52,13 +73,16 @@ def command_output(command: list[str]) -> str | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["start", "finish"])
+    parser.add_argument("action", choices=["start", "finish", "stage"])
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--status", choices=["running", "complete", "failed"], default="running")
+    parser.add_argument("--stage", help="post-pipeline stage name, e.g. validation or publication")
     parser.add_argument("--weights", type=Path)
     parser.add_argument("--command", default="")
     parser.add_argument("--data-path", type=Path, action="append", default=[])
     args = parser.parse_args()
+    if args.action == "stage" and not args.stage:
+        parser.error("--stage is required for the stage action")
     args.run_dir.mkdir(parents=True, exist_ok=True)
     path = args.run_dir / "manifest.json"
     if args.action == "start":
@@ -90,6 +114,10 @@ def main() -> int:
             "data_fingerprints": [tree_sha256(path) for path in args.data_path],
             "git_dirty": bool(git("status", "--porcelain")),
         }
+    elif args.action == "stage":
+        if record_stage(path, args.stage, "failed" if args.status == "failed" else "complete") is None:
+            print(f"no manifest to annotate: {path}", file=sys.stderr)
+        return 0
     else:
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = args.status

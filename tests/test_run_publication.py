@@ -20,6 +20,7 @@ def test_validate_and_export_completed_run(tmp_path, monkeypatch):
     required = [
         run / "phase4_multiseed" / "contrib_aggregate.json",
         run / "phase4_multiseed" / "absolute_improvements_aggregate.json",
+        run / "phase4_multiseed" / "contribution_status_aggregate.json",
         run / "phase4_multiseed" / "layer_ranking_scores.json",
         run / "phase4_multiseed" / "layer_ranking_metadata.json",
         run / "phase4_multiseed" / "layer_rankings.json",
@@ -75,7 +76,11 @@ def test_validate_and_export_completed_run(tmp_path, monkeypatch):
     assert (published / "phase4_rankings.json").is_file()
     assert (published / "phase4_importance_evidence.json").is_file()
     assert (published / "phase4_ranking_stability.json").is_file()
+    assert (published / "phase4_status.json").is_file()
     assert (published / "reports" / "summary.md").is_file()
+    stages = json.loads((run / "manifest.json").read_text(encoding="utf-8"))["stages"]
+    assert stages["validation"]["status"] == "complete"
+    assert stages["publication"]["status"] == "complete"
 
 
 def test_validator_rejects_incomplete_equation_record(tmp_path, monkeypatch):
@@ -83,6 +88,7 @@ def test_validator_rejects_incomplete_equation_record(tmp_path, monkeypatch):
     required = [
         run / "phase4_multiseed" / "contrib_aggregate.json",
         run / "phase4_multiseed" / "absolute_improvements_aggregate.json",
+        run / "phase4_multiseed" / "contribution_status_aggregate.json",
         run / "phase4_multiseed" / "layer_ranking_scores.json",
         run / "phase4_multiseed" / "layer_ranking_metadata.json",
         run / "phase4_multiseed" / "layer_rankings.json",
@@ -104,5 +110,15 @@ def test_validator_rejects_incomplete_equation_record(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(sys, "argv", ["validate_gpu_run.py", "--run-dir", str(run)])
+    assert validate_main() != 0
+    # A late failure must be visible in the manifest, which the pipeline already
+    # marked "complete", and must block publication.
+    manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "validation_failed"
+    assert manifest["stages"]["validation"]["status"] == "failed"
+    assert json.loads((run / "validation.json").read_text(encoding="utf-8"))["status"] == "failed"
+    monkeypatch.setattr(sys, "argv", [
+        "export_run_summary.py", "--run-dir", str(run), "--out-root", str(tmp_path / "published"),
+    ])
     with pytest.raises(SystemExit):
-        validate_main()
+        export_main()

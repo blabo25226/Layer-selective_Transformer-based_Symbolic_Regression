@@ -5,7 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from run_manifest import record_stage  # noqa: E402
 
 
 def main() -> int:
@@ -22,6 +27,10 @@ def main() -> int:
     validation = run / "validation.json"
     if not validation.is_file():
         parser.error("validate the run with scripts/validate_gpu_run.py first")
+    validation_status = json.loads(validation.read_text(encoding="utf-8")).get("status")
+    if validation_status != "validated":
+        record_stage(run / "manifest.json", "publication", "failed")
+        parser.error(f"run did not pass validation: status={validation_status}")
     destination.mkdir(parents=True)
     for name in ("manifest.json", "validation.json"):
         shutil.copy2(run / name, destination / name)
@@ -64,6 +73,7 @@ def main() -> int:
     lines = [
         f"# Published GPU run: {run_id}", "",
         f"- Status: `{manifest.get('status')}`",
+        f"- Validation: `{validation_status}`",
         f"- Git commit: `{manifest.get('git', {}).get('commit')}`",
         f"- Branch: `{manifest.get('git', {}).get('branch')}`",
         f"- Checkpoint SHA256: `{manifest.get('checkpoint', {}).get('sha256')}`",
@@ -77,6 +87,7 @@ def main() -> int:
     lines.extend(f"- `{name}`" for name in ["manifest.json", "validation.json", *copied])
     lines.append("- `reports/`")
     (destination / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    record_stage(run / "manifest.json", "publication", "complete")
     print(destination)
     return 0
 
