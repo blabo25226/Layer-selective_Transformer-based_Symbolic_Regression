@@ -1,10 +1,14 @@
 from torch import nn
+import os
 import pathlib
 import torch
 import numpy as np
 
-# Allow loading Linux-trained checkpoints on Windows.
-pathlib.PosixPath = pathlib.WindowsPath  # type: ignore[misc, assignment]
+# Allow loading Linux-trained checkpoints on Windows. On POSIX this remap would
+# make pathlib.Path() build an (unsupported) WindowsPath and break unrelated
+# imports (e.g. networkx), so it must only apply on Windows.
+if os.name == "nt":
+    pathlib.PosixPath = pathlib.WindowsPath  # type: ignore[misc, assignment]
 from symbolicregression.model.model_wrapper import ModelWrapper
 from symbolicregression.model.sklearn_wrapper import SymbolicTransformerRegressor , get_top_k_features
 import time 
