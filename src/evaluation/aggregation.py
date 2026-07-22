@@ -44,7 +44,11 @@ def aggregate_prediction_scores(
         vals = finite_values(key)
         out[f"{key}_mean"] = float(np.mean(vals)) if vals else float("nan")
         out[f"{key}_median"] = float(np.median(vals)) if vals else float("nan")
-    for key in ("var_f1", "var_precision", "var_recall", "sym_recovery", "sym_skeleton"):
+    for key in (
+        "var_f1", "var_precision", "var_recall", "sym_recovery", "sym_skeleton",
+        "has_tan", "has_division", "near_singularity", "extrapolation_valid",
+        "extrapolation_extreme",
+    ):
         vals = finite_values(key, rows)
         out[f"{key}_mean"] = float(np.mean(vals)) if vals else float("nan")
     penalized_nmse = [

@@ -100,6 +100,7 @@ def run_level(
         np.random.seed(args.seed + 10_000)
         random.seed(args.seed + 10_000)
         model.eval()
+        started = time.time()
         ev = eval_one(
             model,
             beam_params if decode == "beam" else params_fit,
@@ -107,7 +108,11 @@ def run_level(
             decode=decode,
             tpsr_kwargs=tpsr_kwargs if decode == "tpsr" else None,
         )
-        out[name] = ev["aggregate"]
+        out[name] = {
+            **ev["aggregate"],
+            "elapsed_sec": time.time() - started,
+            "per_problem": ev["per_problem"],
+        }
     return out
 
 

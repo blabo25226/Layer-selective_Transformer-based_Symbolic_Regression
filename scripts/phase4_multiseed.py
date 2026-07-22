@@ -44,10 +44,12 @@ from evaluation.layer_contribution import (  # noqa: E402
     absolute_improvements,
     compute_contributions,
     rank_by_contribution,
+    ranking_stability,
     reference_improves,
 )
 from models.nesymres_adapter import load_nesymres  # noqa: E402
 from training.single_layer import clone_model  # noqa: E402
+from training.selective_layers import ranking_from_contributions, usable_ranking_metrics  # noqa: E402
 from training.tuning import build_config_grid, seed_everything, tune_selective  # noqa: E402
 from experiment_runtime import phase_output_paths  # noqa: E402
 
@@ -117,6 +119,7 @@ def run_one_seed(
     conditions = build_phase4_conditions(base_model)
     scores_by_metric: Dict[str, Dict[str, float]] = {m: {} for m, _ in METRICS}
     tuning_by_condition: Dict[str, Dict[str, object]] = {}
+    equations_by_condition: Dict[str, List[Dict[str, Any]]] = {}
     configs = build_config_grid(
         args.lr_grid or [args.lr],
         args.epoch_grid or [args.epochs],
@@ -151,7 +154,9 @@ def run_one_seed(
         model.eval()
         val_ce = eval_ce_loss(model, val_loader, device) if len(val_ds) else float("nan")
         seed_everything(seed + 10_000)
-        agg = eval_problems(model, fit_eval, validation_problems)["aggregate"]
+        decoded = eval_problems(model, fit_eval, validation_problems)
+        agg = decoded["aggregate"]
+        equations_by_condition[name] = decoded["per_problem"]
         agg["val_ce"] = val_ce
         for m, _ in METRICS:
             scores_by_metric[m][name] = float(agg.get(m, float("nan")))
@@ -184,6 +189,7 @@ def run_one_seed(
         "contributions": contrib,
         "contribution_status": statuses,
         "tuning": tuning_by_condition,
+        "equations": equations_by_condition,
     }
 
 
@@ -267,6 +273,7 @@ def main() -> int:
     log(f"train={len(train_problems)} validation={len(validation_problems)} (test unused)")
 
     per_seed: List[Dict[str, Dict[str, float]]] = []
+    absolute_per_seed: List[Dict[str, Dict[str, float]]] = []
     status_per_seed: List[Dict[str, Dict[str, object]]] = []
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for seed in args.seeds:
@@ -277,6 +284,12 @@ def main() -> int:
         )
         contrib = run["contributions"]
         per_seed.append(contrib)
+        absolute_per_seed.append({
+            metric: {
+                layer: value for layer, value in table.items() if layer != "all_params"
+            }
+            for metric, table in run["absolute_improvements"].items()
+        })
         status_per_seed.append(run["contribution_status"])
         (OUT_DIR / f"contrib_seed{seed}.json").write_text(
             json.dumps(_sanitize(contrib), indent=2), encoding="utf-8"
@@ -286,6 +299,7 @@ def main() -> int:
             ("absolute_improvements", f"absolute_improvements_seed{seed}.json"),
             ("contribution_status", f"contribution_status_seed{seed}.json"),
             ("tuning", f"tuning_seed{seed}.json"),
+            ("equations", f"equations_seed{seed}.json"),
         ):
             (OUT_DIR / filename).write_text(
                 json.dumps(_sanitize(run[key]), indent=2), encoding="utf-8"
@@ -293,6 +307,7 @@ def main() -> int:
         log(f"  seed {seed} done ({time.time() - t0:.1f}s)")
 
     agg = aggregate(per_seed)
+    absolute_agg = aggregate(absolute_per_seed)
     reference_summary = {
         metric: {
             "valid_seed_count": sum(
@@ -317,11 +332,94 @@ def main() -> int:
                     "n": 0.0,
                     "top3_frac": 0.0,
                 })
+    source_by_metric = {
+        metric: (
+            "normalized_full_reference"
+            if summary["valid_seed_count"] == summary["seed_count"]
+            else "absolute_improvement_over_pretrained"
+        )
+        for metric, summary in reference_summary.items()
+    }
+    ranking_scores = {
+        metric: (
+            agg.get(metric, {})
+            if source == "normalized_full_reference"
+            else absolute_agg.get(metric, {})
+        )
+        for metric, source in source_by_metric.items()
+    }
+    selected_per_seed = [
+        {
+            metric: (
+                per_seed[index].get(metric, {})
+                if source == "normalized_full_reference"
+                else absolute_per_seed[index].get(metric, {})
+            )
+            for metric, source in source_by_metric.items()
+        }
+        for index in range(len(per_seed))
+    ]
+    stability = ranking_stability(selected_per_seed, source_by_metric)
+    layer_rankings = {}
+    for mode in ("accuracy", "ce"):
+        try:
+            layer_rankings[mode] = {
+                "order": ranking_from_contributions(ranking_scores, mode),
+                "metrics": usable_ranking_metrics(ranking_scores, mode),
+            }
+        except (KeyError, ValueError):
+            layer_rankings[mode] = {"order": [], "metrics": []}
+    importance_evidence = {}
+    for metric, table in ranking_scores.items():
+        finite = {
+            layer: stats for layer, stats in table.items()
+            if np.isfinite(float(stats.get("mean", float("nan"))))
+        }
+        ordered = sorted(finite, key=lambda layer: (-finite[layer]["mean"], layer))
+        supported = [
+            layer for layer in ordered
+            if np.isfinite(float(finite[layer].get("ci95", float("nan"))))
+            and finite[layer]["mean"] - finite[layer]["ci95"] > 0
+        ]
+        importance_evidence[metric] = {
+            "score_source": source_by_metric[metric],
+            "best_layer": ordered[0] if ordered else None,
+            "best_mean_score": finite[ordered[0]]["mean"] if ordered else float("nan"),
+            "layers_with_positive_mean": [layer for layer in ordered if finite[layer]["mean"] > 0],
+            "layers_with_95pct_ci_above_zero": supported,
+            "any_layer_supported": bool(supported),
+            "interpretation": (
+                "ranking alone is relative; call a layer improving only when its score CI is above zero"
+            ),
+        }
     (OUT_DIR / "contrib_aggregate.json").write_text(
         json.dumps(_sanitize(agg), indent=2), encoding="utf-8"
     )
     (OUT_DIR / "contribution_status_aggregate.json").write_text(
         json.dumps(reference_summary, indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "absolute_improvements_aggregate.json").write_text(
+        json.dumps(_sanitize(absolute_agg), indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "layer_ranking_scores.json").write_text(
+        json.dumps(_sanitize(ranking_scores), indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "layer_ranking_metadata.json").write_text(
+        json.dumps({
+            "rule": "use normalized contribution only when full FT improves in every seed; otherwise use absolute improvement over pretrained",
+            "metric_sources": source_by_metric,
+            "seeds": args.seeds,
+        }, indent=2),
+        encoding="utf-8",
+    )
+    (OUT_DIR / "layer_rankings.json").write_text(
+        json.dumps(layer_rankings, indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "layer_importance_evidence.json").write_text(
+        json.dumps(_sanitize(importance_evidence), indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "ranking_stability.json").write_text(
+        json.dumps(_sanitize(stability), indent=2), encoding="utf-8"
     )
 
     # Report
@@ -338,8 +436,9 @@ def main() -> int:
         "Contribution `C=1` means the single layer recovers the full-FT gain; `C=0` "
         "means no better than pretrained. **A layer is only 'high-contribution' if its "
         "CI stays clearly above the random/other layers across seeds.**",
-        "If full FT does not improve on pretrained for a metric, normalized contribution "
-        "is recorded as undefined; use the saved absolute improvements instead.",
+        "If full FT does not improve on pretrained for a metric in every seed, normalized "
+        "contribution is recorded as undefined and the live ranking automatically uses "
+        "absolute improvement over pretrained from this same validation run.",
         "",
     ]
     lines += [
@@ -355,16 +454,16 @@ def main() -> int:
         )
     lines.append("")
     for m, higher in METRICS:
-        stats = agg.get(m, {})
+        stats = ranking_scores.get(m, {})
         # order by mean desc (NaN last)
         order = sorted(
             stats.items(),
             key=lambda kv: (1, 0.0) if math.isnan(kv[1]["mean"]) else (0, -kv[1]["mean"]),
         )
         lines += [
-            f"## {m}",
+            f"## {m} (`{source_by_metric[m]}`)",
             "",
-            "| rank | layer | mean C | 95% CI | std | top-3 stability |",
+            "| rank | layer | mean ranking score | 95% CI | std | top-3 stability |",
             "|------|-------|--------|--------|-----|-----------------|",
         ]
         for i, (layer, s) in enumerate(order, 1):
@@ -373,6 +472,34 @@ def main() -> int:
                 f"{fmt(s['std'])} | {s['top3_frac']*100:.0f}% |"
             )
         lines.append("")
+
+    lines += [
+        "## Seed-to-seed ranking stability",
+        "",
+        "| metric | score source | mean Spearman | mean Kendall |",
+        "|---|---|---:|---:|",
+    ]
+    for metric, source in source_by_metric.items():
+        item = stability[metric]
+        lines.append(
+            f"| `{metric}` | `{source}` | {fmt(item['mean_spearman'])} | "
+            f"{fmt(item['mean_kendall'])} |"
+        )
+    lines.append("")
+
+    lines += [
+        "## Evidence that a layer actually improves over pretrained",
+        "",
+        "| metric | best layer | best mean score | layers with 95% CI above zero |",
+        "|---|---|---:|---|",
+    ]
+    for metric, item in importance_evidence.items():
+        supported = ", ".join(f"`{name}`" for name in item["layers_with_95pct_ci_above_zero"])
+        lines.append(
+            f"| `{metric}` | `{item['best_layer']}` | {fmt(item['best_mean_score'])} | "
+            f"{supported or 'none'} |"
+        )
+    lines.append("")
 
     lines += [
         "## How to read this",

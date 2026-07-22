@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -34,20 +36,24 @@ from data.dreamlike_grn import (  # noqa: E402
 from data.finetune_dataset import GRNFinetuneDataset, collate_finetune  # noqa: E402
 from data.regulator_selection import oracle_regulators  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.equation_records import dataset_variable_mapping, make_equation_record  # noqa: E402
 from evaluation.aggregation import aggregate_prediction_scores  # noqa: E402
 from evaluation.grn_metrics import edge_recovery, predicted_edges_from_selections  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
+from training.selective_layers import require_live_phase4_ranking, resolve_selected_layers  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
 DREAM4 = ROOT / "data" / "dream4"
-DREAMLIKE = ROOT / "results" / "synthetic" / "phase7_dreamlike_v1"
-WEIGHTS = ROOT / "NSRS" / "weights" / "10M.ckpt"
-CONFIG = ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml"
-EQ_SETTING = ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json"
-OUT_DIR = ROOT / "results" / "phase_results" / "phase7_dream4"
-REPORT = ROOT / "results" / "phase_results" / "phase7_dream4_report.md"
-
-HIGH_CONTRIB = ["decoder_0", "decoder_4", "encoder_0"]
+DREAMLIKE = Path(os.environ.get("LTSR_DREAMLIKE_DATA", str(ROOT / "results" / "synthetic" / "phase7_dreamlike_v1")))
+WEIGHTS = Path(os.environ.get("LTSR_WEIGHTS", str(ROOT / "NSRS" / "weights" / "10M.ckpt")))
+CONFIG = Path(os.environ.get("LTSR_CONFIG", str(ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml")))
+EQ_SETTING = Path(os.environ.get("LTSR_EQ_SETTING", str(ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json")))
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase7_dream4_size10", "phase7_dream4_report.md")
+PHASE4_CONTRIB = Path(os.environ.get("LTSR_PHASE4_CONTRIB", str(ROOT / "results" / "phase_results" / "phase4_multiseed" / "contrib_aggregate.json")))
+HIGH_CONTRIB, LAYER_SOURCE, LAYER_RULE = resolve_selected_layers(PHASE4_CONTRIB, mode="accuracy", rule="top", k=3)
+if os.environ.get("LTSR_REQUIRE_LIVE_PHASE4", "0") == "1":
+    require_live_phase4_ranking(LAYER_SOURCE, PHASE4_CONTRIB)
 
 
 def log(msg: str) -> None:
@@ -90,7 +96,7 @@ def make_light_fit(params_fit, beam_size=1, n_restarts=1, stop_time=0.5):
     return p
 
 
-def eval_sr(model, params_fit, problems) -> Dict[str, Any]:
+def eval_sr(model, params_fit, problems, source_names=None) -> Dict[str, Any]:
     import contextlib
     import io
     import warnings
@@ -100,6 +106,8 @@ def eval_sr(model, params_fit, problems) -> Dict[str, Any]:
         # True vars = columns present (selection quality assessed separately)
         true_vars = ds.spec.variable_names
         expr = ""
+        out: Dict[str, Any] = {}
+        failure_reason = None
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -108,11 +116,34 @@ def eval_sr(model, params_fit, problems) -> Dict[str, Any]:
                 ):
                     out = predict_equation(model, params_fit, ds.X, ds.y, quiet=True)
                 expr = out["equation"]
-        except Exception:
+        except Exception as exc:
             expr = ""
+            failure_reason = f"{type(exc).__name__}: {exc}"
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
-        sc = score_prediction(ds.y, y_hat, expr, true_vars, true_expr="")
-        rows.append({"eq_id": ds.spec.eq_id, "pred": expr, "motif": ds.spec.motif, **sc})
+        sc = score_prediction(
+            ds.y, y_hat, expr, true_vars, true_expr="", X=ds.X,
+            variable_names=ds.spec.variable_names,
+        )
+        target_index = int(ds.spec.parameters.get("target_gene", -1))
+        target_name = (
+            str(source_names[target_index])
+            if source_names is not None and 0 <= target_index < len(source_names)
+            else None
+        )
+        rows.append(make_equation_record(
+            eq_id=ds.spec.eq_id,
+            predicted_expr=expr,
+            variable_names=ds.spec.variable_names,
+            mapping=dataset_variable_mapping(ds, source_names),
+            scores=sc,
+            true_expr="",
+            candidate_expressions=out.get("all_preds", []),
+            decoder="nesymres_beam_bfgs",
+            decoder_metadata={"bfgs_loss": out.get("bfgs_loss")},
+            failure_reason=failure_reason,
+            motif=ds.spec.motif,
+            target_gene=target_name,
+        ))
     return {
         "aggregate": aggregate_prediction_scores(rows),
         "per_problem": rows,
@@ -158,7 +189,14 @@ def main() -> int:
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
     parser.add_argument("--bfgs-stop-time", type=float, default=0.5)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     root = find_dream4_root(args.dream4_root)
     net_ids = list_size10_net_ids(root) if args.all_nets else [args.net_id]
@@ -179,7 +217,7 @@ def main() -> int:
     with EQ_SETTING.open(encoding="utf-8") as f:
         eq_setting = json.load(f)
     train_ds = GRNFinetuneDataset(
-        ft_problems, eq_setting["word2id"], max_points=args.max_points, seed=0
+        ft_problems, eq_setting["word2id"], max_points=args.max_points, seed=args.seed
     )
     log(f"FT tokenized: {len(train_ds)}")
     loader = DataLoader(
@@ -187,6 +225,7 @@ def main() -> int:
         batch_size=min(args.batch_size, max(len(train_ds), 1)),
         shuffle=True,
         collate_fn=collate_finetune,
+        generator=torch.Generator().manual_seed(args.seed),
     )
     ft_model = clone_model(base_model)
     if len(train_ds):
@@ -208,7 +247,7 @@ def main() -> int:
         # Use timeseries FD as SR supervision; selection on same X/y
         X, Y = bundle["X_ts"], bundle["Y_ts"]
         X_tr, Y_tr, X_te, Y_te = trajectory_train_test_split(
-            bundle["times"], bundle["trajectories"], seed=net_id
+            bundle["times"], bundle["trajectories"], seed=args.seed * 1000 + net_id
         )
 
         evaluated = set(
@@ -221,6 +260,7 @@ def main() -> int:
         true_edges = [(r, t) for r, t, _ in network.edges if t in evaluated]
 
         sel_summary = {}
+        train_selections = {}
         for method in methods:
             _, selections, sel_rows = build_dream4_local_problems(
                 network,
@@ -232,6 +272,7 @@ def main() -> int:
                 max_vars=args.max_vars,
                 target_limit=args.target_limit,
             )
+            train_selections[method] = selections
             er = edge_recovery(true_edges, predicted_edges_from_selections(selections))
             mean_f1 = float(np.mean([r["f1"] for r in sel_rows])) if sel_rows else 0.0
             sel_summary[method] = {
@@ -264,6 +305,7 @@ def main() -> int:
             split="test",
             max_vars=args.max_vars,
             target_limit=args.target_limit,
+            fixed_selections=train_selections["corr"],
         )
 
         sr_net = {}
@@ -275,7 +317,7 @@ def main() -> int:
             log(f"  SR {name} n={len(probs)}")
             t0 = time.time()
             model.eval()
-            ev = eval_sr(model, fit, probs)
+            ev = eval_sr(model, fit, probs, network.gene_names)
             ev["elapsed_sec"] = time.time() - t0
             a = ev["aggregate"]
             log(
@@ -291,7 +333,7 @@ def main() -> int:
         "net_ids": net_ids,
         "selection": all_sel,
         "sr": all_sr,
-        "ft": {"layers": HIGH_CONTRIB, "source": "phase7_dreamlike_oracle", **train_info},
+        "ft": {"layers": HIGH_CONTRIB, "ranking_source": LAYER_SOURCE, "rule": LAYER_RULE, "source": "phase7_dreamlike_oracle", **train_info},
         "config": vars(args),
     }
     # Path not JSON serializable

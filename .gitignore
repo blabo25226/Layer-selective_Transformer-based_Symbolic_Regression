@@ -12,6 +12,7 @@ __pycache__/
 
 # Local experiment artifacts
 results/runs/
+results/archives/
 results/synthetic/_test_tmp/
 .claude/
 

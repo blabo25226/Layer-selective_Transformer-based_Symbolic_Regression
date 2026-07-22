@@ -18,6 +18,7 @@ from training.selective_layers import (  # noqa: E402
     middle_k,
     random_k,
     ranking_from_contributions,
+    require_live_phase4_ranking,
     usable_ranking_metrics,
     top_k,
 )
@@ -56,6 +57,16 @@ def test_random_excludes_top(tmp_path=None):
     # explicit exclude on random_k
     r = random_k(PHASE4_ACCURACY_RANKING, 3, seed=0, exclude=top3)
     assert not (set(r) & top3)
+
+
+def test_multiple_random_layer_sets_are_named_and_exclude_top():
+    c = build_phase5_conditions(
+        PHASE4_ACCURACY_RANKING, k=3, random_seed=0, random_seeds=[0, 1, 2]
+    )
+    top3 = set(top_k(PHASE4_ACCURACY_RANKING, 3))
+    for name in ("random_3", "random_3_seed1", "random_3_seed2"):
+        assert name in c
+        assert not (set(c[name]) & top3)
 
 
 def test_ranking_from_contributions():
@@ -112,3 +123,14 @@ def test_undefined_metric_is_excluded_from_accuracy_ranking():
     }
     assert usable_ranking_metrics(tables, "accuracy") == ["val_ce"]
     assert ranking_from_contributions(tables, "accuracy")[0] == "decoder_4"
+
+
+def test_phase8_gpu_mode_rejects_missing_live_ranking(tmp_path):
+    missing = tmp_path / "missing.json"
+    try:
+        require_live_phase4_ranking("fallback", missing)
+    except RuntimeError as exc:
+        assert "Refusing to use the frozen CPU fallback" in str(exc)
+        assert str(missing) in str(exc)
+    else:
+        raise AssertionError("fallback ranking was accepted")

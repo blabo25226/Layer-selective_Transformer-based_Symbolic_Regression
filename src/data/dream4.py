@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -256,6 +256,7 @@ def build_dream4_local_problems(
     include_target: bool = True,
     target_ids: Optional[Sequence[int]] = None,
     size_tag: Optional[int] = None,
+    fixed_selections: Optional[Mapping[int, Sequence[int]]] = None,
 ) -> Tuple[List[SampledDataset], Dict[int, List[int]], List[dict]]:
     """Same contract as Phase 7 dreamlike: per-target local SR problems."""
     from .regulator_selection import (
@@ -278,7 +279,10 @@ def build_dream4_local_problems(
     sel_rows = []
     for t in targets:
         y = Y[:, t]
-        regs = select_regulators(method, grn, X, y, t, k=k)
+        if fixed_selections is None:
+            regs = select_regulators(method, grn, X, y, t, k=k)
+        else:
+            regs = [int(r) for r in fixed_selections.get(t, ())][:k]
         selections[t] = regs
         true = oracle_regulators(grn, t)
         sm = selection_metrics(true, regs)

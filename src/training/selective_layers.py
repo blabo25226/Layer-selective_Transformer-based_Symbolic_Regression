@@ -187,6 +187,15 @@ def resolve_selected_layers(
     return layers, source, f"{rule}_{k} of {mode} ranking"
 
 
+def require_live_phase4_ranking(source: str, contributions_path: Path) -> None:
+    """Reject frozen fallback rankings in a production GPU run."""
+    if source == "fallback":
+        raise RuntimeError(
+            "A live Phase-4 ranking is required, but no valid contribution file was "
+            f"found at {contributions_path}. Refusing to use the frozen CPU fallback."
+        )
+
+
 def load_phase4_ranking(
     contributions_path: Path,
     mode: str = "accuracy",
@@ -261,6 +270,7 @@ def build_phase5_conditions(
     *,
     k: int = 3,
     random_seed: int = 0,
+    random_seeds: Optional[Sequence[int]] = None,
 ) -> Dict[str, Optional[List[str]]]:
     """
     Phase 5 comparison sets.
@@ -285,6 +295,12 @@ def build_phase5_conditions(
     top_exclude = top_k(ranking, max(k, 3))
     cond[f"middle_{k}"] = middle_k(ranking, k)
     cond[f"random_{k}"] = random_k(ranking, k, seed=random_seed, exclude=top_exclude)
+    for seed in dict.fromkeys(random_seeds or [random_seed]):
+        if int(seed) == int(random_seed):
+            continue
+        cond[f"random_{k}_seed{int(seed)}"] = random_k(
+            ranking, k, seed=int(seed), exclude=top_exclude
+        )
     cond[f"bottom_{k}"] = bottom_k(ranking, k)
     cond["all_params"] = None
     return cond

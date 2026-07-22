@@ -26,6 +26,7 @@ from data.finetune_dataset import (  # noqa: E402
 )
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from evaluation.aggregation import aggregate_prediction_scores, true_variables  # noqa: E402
+from evaluation.equation_records import dataset_variable_mapping, make_equation_record  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from models.tpsr_adapter import predict_equation_tpsr  # noqa: E402
 from training.selective_layers import resolve_selected_layers  # noqa: E402
@@ -91,6 +92,8 @@ def eval_one(
         t0 = time.time()
         expr = ""
         meta: Dict[str, Any] = {}
+        candidates: List[str] = []
+        failure_reason = None
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -100,12 +103,14 @@ def eval_one(
                     ):
                         out = predict_equation(model, params_fit, ds.X, ds.y, quiet=True)
                     expr = out["equation"]
+                    candidates = out.get("all_preds", [])
                     meta = {"bfgs_loss": out.get("bfgs_loss")}
                 else:
                     out = predict_equation_tpsr(
                         model, params_fit, ds.X, ds.y, quiet=True, **tpsr_kwargs
                     )
                     expr = out["equation"]
+                    candidates = [expr] if expr else []
                     meta = {
                         "bfgs_loss": out.get("bfgs_loss"),
                         "reward": out.get("reward"),
@@ -114,24 +119,28 @@ def eval_one(
                     }
         except Exception as exc:
             expr = ""
-            meta = {"error": str(exc)}
+            failure_reason = f"{type(exc).__name__}: {exc}"
+            meta = {"error": failure_reason}
         elapsed = time.time() - t0
         times.append(elapsed)
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
         sc = score_prediction(
             ds.y, y_hat, expr, true_variables(true_expr, ds.spec.variable_names),
-            true_expr=true_expr
+            true_expr=true_expr, X=ds.X, variable_names=ds.spec.variable_names,
         )
-        rows.append(
-            {
-                "eq_id": ds.spec.eq_id,
-                "pred": expr,
-                "true": true_expr,
-                "elapsed_sec": elapsed,
-                **meta,
-                **sc,
-            }
-        )
+        rows.append(make_equation_record(
+            eq_id=ds.spec.eq_id,
+            predicted_expr=expr,
+            variable_names=ds.spec.variable_names,
+            mapping=dataset_variable_mapping(ds),
+            scores=sc,
+            true_expr=true_expr,
+            candidate_expressions=candidates,
+            decoder="nesymres_beam_bfgs" if decode == "beam" else "tpsr_mcts_bfgs",
+            decoder_metadata=meta,
+            failure_reason=failure_reason,
+            elapsed_sec=elapsed,
+        ))
     agg = aggregate_prediction_scores(rows)
     agg["mean_time_sec"] = float(np.mean(times)) if times else float("nan")
     agg["total_time_sec"] = float(np.sum(times)) if times else float("nan")
