@@ -41,26 +41,65 @@ def main() -> int:
         summary[noise] = {}
         for cell in cells:
             summary[noise][cell] = {}
-            for metric in ("penalized_nmse", "valid_rate", "complexity", "sym_rate"):
+            for metric in (
+                "penalized_nmse", "valid_rate", "complexity", "sym_rate",
+                "elapsed_sec", "near_singularity_mean", "extrapolation_valid_mean",
+            ):
                 values = [float(run[noise][cell][metric]) for run in runs]
                 summary[noise][cell][metric] = {**_ci95(values), "values": values}
-    out = {"seeds": args.seeds, "summary": summary}
+    effects = {}
+    required = {
+        "pretrained_beam", "pretrained_tpsr", "selective_beam", "selective_tpsr"
+    }
+    if required.issubset(cells):
+        for noise in noises:
+            per_seed = []
+            for run in runs:
+                score = lambda cell: float(run[noise][cell]["penalized_nmse"])
+                tpsr_pre = score("pretrained_beam") - score("pretrained_tpsr")
+                tpsr_sel = score("selective_beam") - score("selective_tpsr")
+                per_seed.append({
+                    "ft_effect_beam": score("pretrained_beam") - score("selective_beam"),
+                    "ft_effect_tpsr": score("pretrained_tpsr") - score("selective_tpsr"),
+                    "tpsr_effect_pretrained": tpsr_pre,
+                    "tpsr_effect_selective": tpsr_sel,
+                    "interaction": tpsr_sel - tpsr_pre,
+                })
+            effects[noise] = {
+                key: {**_ci95([row[key] for row in per_seed]), "values": [row[key] for row in per_seed]}
+                for key in per_seed[0]
+            }
+    out = {"seeds": args.seeds, "summary": summary, "paired_effects": effects}
     out_dir = args.run_dir / "phase6_noise_multiseed"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "summary.json").write_text(json.dumps(safe(out), indent=2), encoding="utf-8")
     lines = ["# Phase 6 multi-seed noise summary", "", f"- Seeds: {args.seeds}", ""]
     for noise in noises:
         lines += [f"## Noise {noise}", "",
-                  "| condition | penalized NMSE | 95% t-CI | valid | complexity |",
-                  "|---|---:|---:|---:|---:|"]
+                  "| condition | penalized NMSE | 95% t-CI | valid | complexity | time (s) | singularity | extrapolation valid |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|"]
         for cell in cells:
             s = summary[noise][cell]
             lines.append(
                 f"| `{cell}` | {s['penalized_nmse']['mean']:.4g} | "
                 f"±{s['penalized_nmse']['ci95']:.4g} | {s['valid_rate']['mean']:.3f} | "
-                f"{s['complexity']['mean']:.3f} |"
+                f"{s['complexity']['mean']:.3f} | {s['elapsed_sec']['mean']:.1f} | "
+                f"{s['near_singularity_mean']['mean']:.3f} | "
+                f"{s['extrapolation_valid_mean']['mean']:.3f} |"
             )
         lines.append("")
+        if noise in effects:
+            lines += [
+                "Paired effects use positive values for improvement in failure-penalized NMSE.",
+                "",
+                "| effect | mean | 95% t-CI |",
+                "|---|---:|---:|",
+            ]
+            for name, stats in effects[noise].items():
+                lines.append(
+                    f"| `{name}` | {stats['mean']:.4g} | ±{stats['ci95']:.4g} |"
+                )
+            lines.append("")
     reports = args.run_dir / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "phase6_noise_multiseed_report.md").write_text("\n".join(lines), encoding="utf-8")

@@ -27,6 +27,7 @@ from data.finetune_dataset import (  # noqa: E402
 from data.splits import split_synthetic_train_validation  # noqa: E402
 from evaluation.aggregation import aggregate_prediction_scores, true_variables  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.equation_records import dataset_variable_mapping, make_equation_record  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from training.selective_layers import (  # noqa: E402
     build_phase5_conditions,
@@ -95,6 +96,8 @@ def eval_problems(model, params_fit, problems) -> Dict[str, Any]:
     for ds in problems:
         true_expr = instantiate_expr(ds)
         expr = ""
+        out: Dict[str, Any] = {}
+        failure_reason = None
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -103,14 +106,26 @@ def eval_problems(model, params_fit, problems) -> Dict[str, Any]:
                 ):
                     out = predict_equation(model, params_fit, ds.X, ds.y, quiet=True)
                 expr = out["equation"]
-        except Exception:
+        except Exception as exc:
             expr = ""
+            failure_reason = f"{type(exc).__name__}: {exc}"
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names)
         sc = score_prediction(
             ds.y, y_hat, expr, true_variables(true_expr, ds.spec.variable_names),
-            true_expr=true_expr
+            true_expr=true_expr, X=ds.X, variable_names=ds.spec.variable_names,
         )
-        per.append({"eq_id": ds.spec.eq_id, "pred": expr, "true": true_expr, **sc})
+        per.append(make_equation_record(
+            eq_id=ds.spec.eq_id,
+            predicted_expr=expr,
+            variable_names=ds.spec.variable_names,
+            mapping=dataset_variable_mapping(ds),
+            scores=sc,
+            true_expr=true_expr,
+            candidate_expressions=out.get("all_preds", []),
+            decoder="nesymres_beam_bfgs",
+            decoder_metadata={"bfgs_loss": out.get("bfgs_loss")},
+            failure_reason=failure_reason,
+        ))
     return {"aggregate": aggregate_prediction_scores(per), "per_problem": per}
 
 
@@ -153,6 +168,10 @@ def main() -> int:
     parser.add_argument("--split-seed", type=int, default=1729)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--k", type=int, default=3, help="k for mid/random/bottom")
+    parser.add_argument(
+        "--random-layer-seeds", type=int, nargs="+", default=[0],
+        help="Independent random layer-set draws; the first keeps the random_k name",
+    )
     parser.add_argument(
         "--ranking",
         choices=["accuracy", "ce"],
@@ -243,7 +262,12 @@ def main() -> int:
         collate_fn=collate_finetune,
     )
 
-    conditions = build_phase5_conditions(ranking, k=args.k, random_seed=0)
+    conditions = build_phase5_conditions(
+        ranking,
+        k=args.k,
+        random_seed=args.random_layer_seeds[0],
+        random_seeds=args.random_layer_seeds,
+    )
     if args.conditions.strip():
         wanted = {c.strip() for c in args.conditions.split(",")}
         conditions = {k: v for k, v in conditions.items() if k in wanted}
@@ -315,6 +339,7 @@ def main() -> int:
             "condition": name,
             "layers": layers,
             "ranking": args.ranking,
+            "ranking_order": ranking,
             "ranking_metrics": ranking_metrics,
             "train": train_info,
             "tuning": tuning,
@@ -353,6 +378,7 @@ def main() -> int:
         f"- Ranking metrics actually used: `{', '.join(ranking_metrics) or 'frozen fallback'}`",
         f"- Order: `{', '.join(ranking)}`",
         f"- k={args.k} for middle / random / bottom",
+        f"- Random layer-set seeds: {args.random_layer_seeds}",
         f"- Train FT: {len(train_ds)}; test eval: {len(test_problems)}",
         f"- Validation tuning grid: lr={args.lr_grid or [args.lr]}, "
         f"epochs={args.epoch_grid or [args.epochs]}, patience={args.patience}",
@@ -456,18 +482,23 @@ def main() -> int:
         return float(r["val_ce"]) if r else float("nan")
 
     top_name = f"top_{args.k}"
-    rand_name = f"random_{args.k}"
+    rand_names = [
+        name for name in by_name
+        if name == f"random_{args.k}" or name.startswith(f"random_{args.k}_seed")
+    ]
     mid_name = f"middle_{args.k}"
-    top_nmse, rand_nmse = _cond_nmse(top_name), _cond_nmse(rand_name)
-    top_ce, rand_ce = _cond_ce(top_name), _cond_ce(rand_name)
+    top_nmse = _cond_nmse(top_name)
+    rand_nmse = float(np.mean([_cond_nmse(name) for name in rand_names])) if rand_names else float("nan")
+    top_ce = _cond_ce(top_name)
+    rand_ce = float(np.mean([_cond_ce(name) for name in rand_names])) if rand_names else float("nan")
     lines.extend(
         [
             "",
             "## H2 check: selected layers vs random control",
             "",
             f"- `{top_name}` NMSE={fmt(top_nmse)}, val CE={fmt(top_ce)}",
-            f"- `{rand_name}` NMSE={fmt(rand_nmse)}, val CE={fmt(rand_ce)} "
-            "(random now excludes the top-3 layers — A-3 fix)",
+            f"- mean of `{rand_names}`: NMSE={fmt(rand_nmse)}, val CE={fmt(rand_ce)} "
+            "(every random set excludes the top-3 layers)",
             f"- `{mid_name}` NMSE={fmt(_cond_nmse(mid_name))}, val CE={fmt(_cond_ce(mid_name))}",
             "",
             (
@@ -491,8 +522,8 @@ def main() -> int:
             "- Transfer proxy: Phase 1 train/test split uses OOD parameter ranges "
             "(same equation families).",
             "- Overfit gap = val_CE − train_CE (larger → more overfit).",
-            "- Layer order derived from Phase 4 `contributions.json` (mode "
-            f"`{args.ranking}`); `random_k` seed=0 excludes top-3 for a fair control.",
+            "- Layer order derived from the live Phase 4 ranking score file (mode "
+            f"`{args.ranking}`); random seeds={args.random_layer_seeds} exclude top-3.",
             "- Light BFGS decode; raise flags for paper-quality decode metrics.",
             "",
         ]

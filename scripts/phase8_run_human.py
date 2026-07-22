@@ -44,28 +44,44 @@ from data.regulator_selection import oracle_regulators  # noqa: E402
 from data.synthetic_grn import SampledDataset  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from evaluation.aggregation import aggregate_prediction_scores  # noqa: E402
+from evaluation.equation_records import dataset_variable_mapping, make_equation_record  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from models.tpsr_adapter import predict_equation_tpsr  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
 
 DATA_DIR = ROOT / "data" / "human" / "gse112372_lps"
-DREAMLIKE = ROOT / "results" / "synthetic" / "phase7_dreamlike_v1"
+DREAMLIKE = Path(
+    os.environ.get(
+        "LTSR_DREAMLIKE_DATA",
+        str(ROOT / "results" / "synthetic" / "phase7_dreamlike_v1"),
+    )
+)
 # Checkpoint/config env-overridable for GPU runs (e.g. LTSR_WEIGHTS=.../100M.ckpt)
 WEIGHTS = Path(os.environ.get("LTSR_WEIGHTS", str(ROOT / "NSRS" / "weights" / "10M.ckpt")))
 CONFIG = Path(os.environ.get("LTSR_CONFIG", str(ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml")))
 EQ_SETTING = Path(os.environ.get("LTSR_EQ_SETTING", str(ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json")))
-OUT_DIR = ROOT / "results" / "phase_results" / "phase8"
-REPORT = ROOT / "results" / "phase_results" / "phase8_report.md"
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase8", "phase8_report.md")
 
-from training.selective_layers import resolve_selected_layers  # noqa: E402
+from training.selective_layers import (  # noqa: E402
+    require_live_phase4_ranking,
+    resolve_selected_layers,
+)
 
 # High-contribution layer set = top-k of the Phase 4 accuracy ranking (principled
 # a-priori; NOT the earlier post-hoc middle_3). Falls back to the frozen ranking
 # if contributions.json is absent.
-_PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4_multiseed" / "contrib_aggregate.json"
+_PHASE4_CONTRIB = Path(
+    os.environ.get(
+        "LTSR_PHASE4_CONTRIB",
+        str(ROOT / "results" / "phase_results" / "phase4_multiseed" / "contrib_aggregate.json"),
+    )
+)
 HIGH_CONTRIB, _HC_SOURCE, _HC_RULE = resolve_selected_layers(
     _PHASE4_CONTRIB, mode="accuracy", rule="top", k=3
 )
+if os.environ.get("LTSR_REQUIRE_LIVE_PHASE4", "0") == "1":
+    require_live_phase4_ranking(_HC_SOURCE, _PHASE4_CONTRIB)
 
 
 def log(msg: str) -> None:
@@ -146,7 +162,9 @@ def build_dreamlike_ft(k: int = 2) -> List[SampledDataset]:
     return out
 
 
-def eval_sr(model, params_fit, problems, decode: str = "beam", tpsr_kw=None) -> Dict[str, Any]:
+def eval_sr(
+    model, params_fit, problems, decode: str = "beam", tpsr_kw=None, source_names=None
+) -> Dict[str, Any]:
     import contextlib
     import io
     import warnings
@@ -155,6 +173,8 @@ def eval_sr(model, params_fit, problems, decode: str = "beam", tpsr_kw=None) -> 
     rows = []
     for ds in problems:
         expr = ""
+        out: Dict[str, Any] = {}
+        failure_reason = None
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -169,11 +189,30 @@ def eval_sr(model, params_fit, problems, decode: str = "beam", tpsr_kw=None) -> 
                         model, params_fit, ds.X, ds.y, quiet=True, **tpsr_kw
                     )
                     expr = out["equation"]
-        except Exception:
+        except Exception as exc:
             expr = ""
+            failure_reason = f"{type(exc).__name__}: {exc}"
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
-        sc = score_prediction(ds.y, y_hat, expr, ds.spec.variable_names, true_expr="")
-        rows.append({"eq_id": ds.spec.eq_id, "pred": expr, **sc})
+        sc = score_prediction(
+            ds.y, y_hat, expr, ds.spec.variable_names, true_expr="", X=ds.X,
+            variable_names=ds.spec.variable_names,
+        )
+        rows.append(make_equation_record(
+            eq_id=ds.spec.eq_id,
+            predicted_expr=expr,
+            variable_names=ds.spec.variable_names,
+            mapping=dataset_variable_mapping(ds, source_names),
+            scores=sc,
+            true_expr="",
+            candidate_expressions=out.get("all_preds", [expr] if expr else []),
+            decoder="nesymres_beam_bfgs" if decode == "beam" else "tpsr_mcts_bfgs",
+            decoder_metadata={
+                key: out.get(key)
+                for key in ("bfgs_loss", "reward", "mcts_steps", "sample_times", "state_ids")
+                if key in out
+            },
+            failure_reason=failure_reason,
+        ))
     return {
         "aggregate": aggregate_prediction_scores(rows),
         "per_problem": rows,
@@ -222,6 +261,8 @@ def eval_holdout_donor(
             else "prior",
         )
         expr = ""
+        out: Dict[str, Any] = {}
+        failure_reason = None
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -236,11 +277,31 @@ def eval_holdout_donor(
                         model, params_fit, ds.X, ds.y, quiet=True, **tpsr_kw
                     )
                     expr = out["equation"]
-        except Exception:
+        except Exception as exc:
             expr = ""
+            failure_reason = f"{type(exc).__name__}: {exc}"
         y_hat = eval_expression(expr, te.X, te.spec.variable_names) if expr else None
-        sc = score_prediction(te.y, y_hat, expr, te.spec.variable_names, true_expr="")
-        rows.append({"eq_id": te.spec.eq_id, "target": tname, "pred": expr, **sc})
+        sc = score_prediction(
+            te.y, y_hat, expr, te.spec.variable_names, true_expr="", X=te.X,
+            variable_names=te.spec.variable_names,
+        )
+        rows.append(make_equation_record(
+            eq_id=te.spec.eq_id,
+            predicted_expr=expr,
+            variable_names=te.spec.variable_names,
+            mapping=dataset_variable_mapping(te, panel.gene_names),
+            scores=sc,
+            true_expr="",
+            candidate_expressions=out.get("all_preds", [expr] if expr else []),
+            decoder="nesymres_beam_bfgs" if decode == "beam" else "tpsr_mcts_bfgs",
+            decoder_metadata={
+                key: out.get(key)
+                for key in ("bfgs_loss", "reward", "mcts_steps", "sample_times", "state_ids")
+                if key in out
+            },
+            failure_reason=failure_reason,
+            target=tname,
+        ))
     return {
         "aggregate": aggregate_prediction_scores(rows),
         "per_problem": rows,
@@ -391,7 +452,10 @@ def main() -> int:
         log(f"  {name}")
         t0 = time.time()
         model.eval()
-        inn = eval_sr(model, fit, prior_probs, decode=decode, tpsr_kw=tpsr_kw)
+        inn = eval_sr(
+            model, fit, prior_probs, decode=decode, tpsr_kw=tpsr_kw,
+            source_names=panel.gene_names,
+        )
         holdout = eval_holdout_donor(
             model,
             fit,
@@ -419,14 +483,29 @@ def main() -> int:
         hold_rows = []
         network = panel.as_grn_like()
         for ds in prior_probs:
+            failure_reason = None
             try:
                 expr = run_pysr(ds.X, ds.y, ds.spec.variable_names, args.pysr_iters)
             except Exception as exc:
                 log(f"    PySR fail {ds.spec.eq_id}: {exc}")
                 expr = ""
+                failure_reason = f"{type(exc).__name__}: {exc}"
             y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
-            sc = score_prediction(ds.y, y_hat, expr, ds.spec.variable_names, true_expr="")
-            pysr_rows.append({"eq_id": ds.spec.eq_id, "pred": expr, **sc})
+            sc = score_prediction(
+                ds.y, y_hat, expr, ds.spec.variable_names, true_expr="", X=ds.X,
+                variable_names=ds.spec.variable_names,
+            )
+            pysr_rows.append(make_equation_record(
+                eq_id=ds.spec.eq_id,
+                predicted_expr=expr,
+                variable_names=ds.spec.variable_names,
+                mapping=dataset_variable_mapping(ds, panel.gene_names),
+                scores=sc,
+                true_expr="",
+                candidate_expressions=[expr] if expr else [],
+                decoder="pysr",
+                failure_reason=failure_reason,
+            ))
 
             motif = ds.spec.motif or ""
             tname = motif.split("target=")[-1].split(";")[0] if "target=" in motif else ""
@@ -448,9 +527,21 @@ def main() -> int:
                     eval_expression(expr, te.X, te.spec.variable_names) if expr else None
                 )
                 sc_te = score_prediction(
-                    te.y, y_hat_te, expr, te.spec.variable_names, true_expr=""
+                    te.y, y_hat_te, expr, te.spec.variable_names, true_expr="", X=te.X,
+                    variable_names=te.spec.variable_names,
                 )
-                hold_rows.append({"eq_id": te.spec.eq_id, "target": tname, "pred": expr, **sc_te})
+                hold_rows.append(make_equation_record(
+                    eq_id=te.spec.eq_id,
+                    predicted_expr=expr,
+                    variable_names=te.spec.variable_names,
+                    mapping=dataset_variable_mapping(te, panel.gene_names),
+                    scores=sc_te,
+                    true_expr="",
+                    candidate_expressions=[expr] if expr else [],
+                    decoder="pysr",
+                    failure_reason=failure_reason,
+                    target=tname,
+                ))
 
         compare_in["pysr"] = {
             "aggregate": aggregate_prediction_scores(pysr_rows),
@@ -478,6 +569,10 @@ def main() -> int:
         "train_donors": train_donors,
         "derivative": args.derivative,
         "k": args.k,
+        "selected_layers": HIGH_CONTRIB,
+        "layer_ranking_source": _HC_SOURCE,
+        "layer_selection_rule": _HC_RULE,
+        "phase4_contributions": str(_PHASE4_CONTRIB),
         "n_train_points": int(X_tr.shape[0]),
         "n_holdout_points": int(X_te.shape[0]),
         "selection": selection_summary,
@@ -506,6 +601,7 @@ def main() -> int:
         f"- Derivative: `{args.derivative}` (proxy, not true time derivative)",
         f"- Candidates per target: k={args.k}, max_vars={args.max_vars}",
         f"- Selective FT layers: `{', '.join(HIGH_CONTRIB)}`",
+        f"- Layer ranking: `{_HC_SOURCE}` (`{_HC_RULE}`) from `{_PHASE4_CONTRIB.as_posix()}`",
         f"- Results JSON: `{out_json.as_posix()}`",
         "",
         "## Regulator selection vs curated prior",

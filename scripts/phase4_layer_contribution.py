@@ -30,6 +30,10 @@ from evaluation.aggregation import (  # noqa: E402
     true_variables,
 )
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.equation_records import (  # noqa: E402
+    dataset_variable_mapping,
+    make_equation_record,
+)
 from evaluation.layer_contribution import (  # noqa: E402
     absolute_improvements,
     compute_contributions,
@@ -114,6 +118,8 @@ def eval_problems(
     for ds in problems:
         true_expr = instantiate_expr(ds)
         expr = ""
+        out: Dict[str, Any] = {}
+        failure_reason = None
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -122,14 +128,26 @@ def eval_problems(
                 ):
                     out = predict_equation(model, params_fit, ds.X, ds.y, quiet=True)
                 expr = out["equation"]
-        except Exception:
+        except Exception as exc:
             expr = ""
+            failure_reason = f"{type(exc).__name__}: {exc}"
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names)
         sc = score_prediction(
             ds.y, y_hat, expr, true_variables(true_expr, ds.spec.variable_names),
-            true_expr=true_expr
+            true_expr=true_expr, X=ds.X, variable_names=ds.spec.variable_names,
         )
-        row = {"eq_id": ds.spec.eq_id, "pred": expr, "true": true_expr, **sc}
+        row = make_equation_record(
+            eq_id=ds.spec.eq_id,
+            predicted_expr=expr,
+            variable_names=ds.spec.variable_names,
+            mapping=dataset_variable_mapping(ds),
+            scores=sc,
+            true_expr=true_expr,
+            candidate_expressions=out.get("all_preds", []),
+            decoder="nesymres_beam_bfgs",
+            decoder_metadata={"bfgs_loss": out.get("bfgs_loss")},
+            failure_reason=failure_reason,
+        )
         per.append(row)
     return {"aggregate": aggregate_prediction_scores(per), "per_problem": per}
 
