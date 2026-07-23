@@ -3,11 +3,66 @@
 from __future__ import annotations
 
 import re
+import signal
+import threading
+from contextlib import contextmanager
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 from sympy import simplify, sympify
 from sympy.core.expr import Expr
+
+# Some predicted expressions send SymPy's polynomial factorization / trigsimp
+# into effectively unbounded work (e.g. dmp_zz_wang Hensel lifting). These are
+# CPU-bound pure-Python loops that never raise, so try/except cannot stop them.
+# Guard the heavy symbolic calls with a wall-clock limit; on timeout we treat
+# the comparison as "could not prove equivalence" (the conservative outcome that
+# never inflates a recovery score).
+SYMPY_OP_TIMEOUT_SEC = 10.0
+
+
+class _SymTimeout(Exception):
+    """Raised when a guarded SymPy call exceeds SYMPY_OP_TIMEOUT_SEC."""
+
+
+@contextmanager
+def _time_limit(seconds: float):
+    """Best-effort wall-clock limit via SIGALRM (main thread, POSIX only).
+
+    Off the main thread or without SIGALRM the call runs unguarded rather than
+    failing; the eval loops that hit the pathological expressions run on the
+    main thread, which is where this matters.
+    """
+    if (
+        seconds <= 0
+        or not hasattr(signal, "SIGALRM")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        yield
+        return
+
+    def _handler(signum, frame):
+        raise _SymTimeout()
+
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def _timed_simplify(expr, seconds: float = SYMPY_OP_TIMEOUT_SEC):
+    """simplify(expr) with a hard time limit (raises _SymTimeout on timeout)."""
+    with _time_limit(seconds):
+        return simplify(expr)
+
+
+def _timed_equals(a, b, seconds: float = SYMPY_OP_TIMEOUT_SEC) -> bool:
+    """a.equals(b) with a hard time limit (raises _SymTimeout on timeout)."""
+    with _time_limit(seconds):
+        return bool(a.equals(b))
 
 
 def nmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -72,12 +127,12 @@ def to_skeleton(expr: str) -> Optional[Expr]:
         from nesymres.architectures.data import constants_to_placeholder
 
         sk = constants_to_placeholder(_normalize_expr_str(expr))
-        return simplify(sympify(sk))
+        return _timed_simplify(sympify(sk))
     except Exception:
         try:
             cleaned = re.sub(r"\d+\.?\d*(?:[eE][+-]?\d+)?", "c", _normalize_expr_str(expr))
             cleaned = re.sub(r"c+", "c", cleaned)
-            return simplify(sympify(cleaned))
+            return _timed_simplify(sympify(cleaned))
         except Exception:
             return None
 
@@ -102,8 +157,8 @@ def symbolic_recovery(
     skeleton = 0.0
     if sk_true is not None and sk_pred is not None:
         try:
-            skeleton = 1.0 if simplify(sk_true - sk_pred) == 0 else 0.0
-            if skeleton == 0.0 and sk_true.equals(sk_pred):
+            skeleton = 1.0 if _timed_simplify(sk_true - sk_pred) == 0 else 0.0
+            if skeleton == 0.0 and _timed_equals(sk_true, sk_pred):
                 skeleton = 1.0
         except Exception:
             skeleton = 0.0
@@ -111,7 +166,7 @@ def symbolic_recovery(
     equiv = 0.0
     if true and pred:
         try:
-            diff = simplify(sympify(true) - sympify(_normalize_expr_str(pred)))
+            diff = _timed_simplify(sympify(true) - sympify(_normalize_expr_str(pred)))
             equiv = 1.0 if diff == 0 else 0.0
         except Exception:
             equiv = skeleton  # fall back
