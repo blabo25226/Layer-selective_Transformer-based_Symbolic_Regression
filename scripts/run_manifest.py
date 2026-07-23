@@ -73,7 +73,7 @@ def command_output(command: list[str]) -> str | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["start", "finish", "stage"])
+    parser.add_argument("action", choices=["start", "finish", "stage", "resume"])
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--status", choices=["running", "complete", "failed"], default="running")
     parser.add_argument("--stage", help="post-pipeline stage name, e.g. validation or publication")
@@ -117,6 +117,23 @@ def main() -> int:
     elif args.action == "stage":
         if record_stage(path, args.stage, "failed" if args.status == "failed" else "complete") is None:
             print(f"no manifest to annotate: {path}", file=sys.stderr)
+        return 0
+    elif args.action == "resume":
+        # Re-entering an existing run (RESUME=1). Preserve the original start
+        # provenance and append a resume breadcrumb (time + commit) so the
+        # manifest records that later phases may run at a different commit.
+        if not path.is_file():
+            print(f"no manifest to resume: {path}", file=sys.stderr)
+            return 0
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.setdefault("resumes", []).append({
+            "at_utc": datetime.now(timezone.utc).isoformat(),
+            "commit": git("rev-parse", "HEAD"),
+            "branch": git("branch", "--show-current"),
+            "git_dirty": bool(git("status", "--porcelain")),
+        })
+        data["status"] = "running"
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return 0
     else:
         data = json.loads(path.read_text(encoding="utf-8"))
