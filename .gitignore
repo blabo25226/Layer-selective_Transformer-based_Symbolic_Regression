@@ -1,3 +1,29 @@
-docs/
-weights/
-data/
+/docs/
+/weights/
+/data/
+**/weights/
+
+# Python/build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Local experiment artifacts
+results/runs/
+results/archives/
+# Smoke runs are throwaway; keeping them untracked would block the next campaign,
+# which requires a completely clean working tree.
+graphs/*_smoke/
+graphs/gpu_smoke_*/
+results/published/*_smoke/
+results/synthetic/_test_tmp/
+.claude/*
+!.claude/settings.json
+
+# Local third-party drops (not vendored; install via pip where applicable)
+/LogicGEP/
+/PySR/
+/dynGENIE3/
+/pySINDy/

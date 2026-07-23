@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 import time
 from pathlib import Path
@@ -35,9 +36,12 @@ from data.dreamlike_grn import build_local_problem  # noqa: E402
 from data.finetune_dataset import GRNFinetuneDataset, collate_finetune  # noqa: E402
 from data.human import build_human_local_problems, prepare_gse112372  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.aggregation import aggregate_prediction_scores  # noqa: E402
+from evaluation.equation_records import dataset_variable_mapping, make_equation_record  # noqa: E402
 from evaluation.generalization import aggregate_lodo, rank_by_generalization  # noqa: E402
 from models.nesymres_adapter import load_nesymres  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
 # Reuse Phase 8 building blocks unchanged.
 from phase8_run_human import (  # noqa: E402
@@ -46,6 +50,9 @@ from phase8_run_human import (  # noqa: E402
     EQ_SETTING,
     DATA_DIR,
     HIGH_CONTRIB,
+    _HC_RULE,
+    _HC_SOURCE,
+    _PHASE4_CONTRIB,
     build_dreamlike_ft,
     eval_holdout_donor,
     eval_sr,
@@ -55,8 +62,7 @@ from phase8_run_human import (  # noqa: E402
     stack_donor_derivatives,
 )
 
-OUT_DIR = ROOT / "results" / "phase_results" / "phase8_lodo"
-REPORT = ROOT / "results" / "phase_results" / "phase8_lodo_report.md"
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase8_lodo", "phase8_lodo_report.md")
 
 
 def log(msg: str) -> None:
@@ -66,16 +72,30 @@ def log(msg: str) -> None:
 def pysr_fold(prior_probs, prior_sel, panel, X_te, Y_te, max_vars, niters) -> Dict[str, float]:
     """PySR in-donor + holdout NMSE for one fold (mirrors phase8 main)."""
     network = panel.as_grn_like()
-    nmses, hold_nmses = [], []
+    in_rows, hold_rows = [], []
     for ds in prior_probs:
+        failure_reason = None
         try:
             expr = run_pysr(ds.X, ds.y, ds.spec.variable_names, niters)
-        except Exception:
+        except Exception as exc:
             expr = ""
+            failure_reason = f"{type(exc).__name__}: {exc}"
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
-        sc = score_prediction(ds.y, y_hat, expr, ds.spec.variable_names, true_expr="")
-        if np.isfinite(sc["nmse"]):
-            nmses.append(sc["nmse"])
+        sc = score_prediction(
+            ds.y, y_hat, expr, ds.spec.variable_names, true_expr="", X=ds.X,
+            variable_names=ds.spec.variable_names,
+        )
+        in_rows.append(make_equation_record(
+            eq_id=ds.spec.eq_id,
+            predicted_expr=expr,
+            variable_names=ds.spec.variable_names,
+            mapping=dataset_variable_mapping(ds, panel.gene_names),
+            scores=sc,
+            true_expr="",
+            candidate_expressions=[expr] if expr else [],
+            decoder="pysr",
+            failure_reason=failure_reason,
+        ))
         motif = ds.spec.motif or ""
         tname = motif.split("target=")[-1].split(";")[0] if "target=" in motif else ""
         if tname in panel.gene_names:
@@ -86,12 +106,34 @@ def pysr_fold(prior_probs, prior_sel, panel, X_te, Y_te, max_vars, niters) -> Di
                 max_vars=max_vars, selection_method="prior",
             )
             y_hat_te = eval_expression(expr, te.X, te.spec.variable_names) if expr else None
-            sc_te = score_prediction(te.y, y_hat_te, expr, te.spec.variable_names, true_expr="")
-            if np.isfinite(sc_te["nmse"]):
-                hold_nmses.append(sc_te["nmse"])
+            sc_te = score_prediction(
+                te.y, y_hat_te, expr, te.spec.variable_names, true_expr="", X=te.X,
+                variable_names=te.spec.variable_names,
+            )
+            hold_rows.append(make_equation_record(
+                eq_id=te.spec.eq_id,
+                predicted_expr=expr,
+                variable_names=te.spec.variable_names,
+                mapping=dataset_variable_mapping(te, panel.gene_names),
+                scores=sc_te,
+                true_expr="",
+                candidate_expressions=[expr] if expr else [],
+                decoder="pysr",
+                failure_reason=failure_reason,
+            ))
+    in_agg = aggregate_prediction_scores(in_rows)
+    hold_agg = aggregate_prediction_scores(hold_rows)
     return {
-        "in": float(np.median(nmses)) if nmses else float("inf"),
-        "hold": float(np.median(hold_nmses)) if hold_nmses else float("inf"),
+        "in": in_agg["penalized_nmse"],
+        "hold": hold_agg["penalized_nmse"],
+        "in_valid_rate": in_agg["valid_rate"],
+        "hold_valid_rate": hold_agg["valid_rate"],
+        "hold_near_singularity": hold_agg.get("near_singularity_mean", float("nan")),
+        "hold_extrapolation_valid": hold_agg.get("extrapolation_valid_mean", float("nan")),
+        "in_aggregate": in_agg,
+        "hold_aggregate": hold_agg,
+        "in_per_problem": in_rows,
+        "hold_per_problem": hold_rows,
     }
 
 
@@ -108,7 +150,14 @@ def main() -> int:
     parser.add_argument("--with-pysr", action="store_true")
     parser.add_argument("--pysr-iters", type=int, default=12)
     parser.add_argument("--force-download", action="store_true")
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log(f"Device: {device}")
@@ -122,10 +171,11 @@ def main() -> int:
     fit = make_light_fit(params_fit)
     base_model.to(device)
     word2id = json.loads(EQ_SETTING.read_text(encoding="utf-8"))["word2id"]
-    dl_ds = GRNFinetuneDataset(build_dreamlike_ft(k=2), word2id, max_points=args.max_points, seed=0)
+    dl_ds = GRNFinetuneDataset(build_dreamlike_ft(k=2), word2id, max_points=args.max_points, seed=args.seed)
     dl_loader = DataLoader(
         dl_ds, batch_size=min(args.batch_size, max(len(dl_ds), 1)),
         shuffle=True, collate_fn=collate_finetune,
+        generator=torch.Generator().manual_seed(args.seed),
     )
     dreamlike_model = clone_model(base_model)
     train_selective(dreamlike_model, dl_loader, HIGH_CONTRIB, epochs=args.epochs, lr=args.lr, device=device)
@@ -148,9 +198,22 @@ def main() -> int:
             ("selective_beam", dreamlike_model),
         ]:
             model.eval()
-            inn = eval_sr(model, fit, prior_probs, decode="beam")
+            inn = eval_sr(
+                model, fit, prior_probs, decode="beam", source_names=panel.gene_names
+            )
             hd = eval_holdout_donor(model, fit, panel, prior_probs, prior_sel, X_te, Y_te, decode="beam")
-            fold[name] = {"in": inn["aggregate"]["nmse"], "hold": hd["aggregate"]["nmse"]}
+            fold[name] = {
+                "in": inn["aggregate"]["penalized_nmse"],
+                "hold": hd["aggregate"]["penalized_nmse"],
+                "in_valid_rate": inn["aggregate"]["valid_rate"],
+                "hold_valid_rate": hd["aggregate"]["valid_rate"],
+                "hold_near_singularity": hd["aggregate"].get("near_singularity_mean", float("nan")),
+                "hold_extrapolation_valid": hd["aggregate"].get("extrapolation_valid_mean", float("nan")),
+                "in_aggregate": inn["aggregate"],
+                "hold_aggregate": hd["aggregate"],
+                "in_per_problem": inn["per_problem"],
+                "hold_per_problem": hd["per_problem"],
+            }
 
         if args.with_pysr:
             fold["pysr"] = pysr_fold(prior_probs, prior_sel, panel, X_te, Y_te, args.max_vars, args.pysr_iters)
@@ -166,7 +229,19 @@ def main() -> int:
     agg = aggregate_lodo(folds, metric="nmse", lower_better=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "lodo_results.json").write_text(
-        json.dumps({"per_fold": per_fold_detail, "aggregate": agg}, indent=2, default=lambda x: None),
+        json.dumps(
+            {
+                "selected_layers": HIGH_CONTRIB,
+                "layer_ranking_source": _HC_SOURCE,
+                "layer_selection_rule": _HC_RULE,
+                "phase4_contributions": str(_PHASE4_CONTRIB),
+                "seed": args.seed,
+                "per_fold": per_fold_detail,
+                "aggregate": agg,
+            },
+            indent=2,
+            default=lambda x: None,
+        ),
         encoding="utf-8",
     )
 
@@ -176,6 +251,7 @@ def main() -> int:
         "",
         f"- Donors (folds): {donors}",
         f"- Derivative: `{args.derivative}`  |  selective layers: `{', '.join(HIGH_CONTRIB)}`",
+        f"- Layer ranking: `{_HC_SOURCE}` (`{_HC_RULE}`) from `{_PHASE4_CONTRIB.as_posix()}`",
         f"- PySR included: {args.with_pysr}",
         "",
         "Generalization gap = median holdout NMSE − median in-donor NMSE, averaged "

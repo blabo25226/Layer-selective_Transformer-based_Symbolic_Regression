@@ -19,7 +19,7 @@ from typing import Dict, List, Mapping, Optional, Sequence
 # Metric keys (as written by scripts/phase4_layer_contribution.py) that define
 # each ranking mode. "accuracy" = mean rank across CE + prediction metrics;
 # "ce" = teacher-forcing cross-entropy only.
-ACCURACY_METRICS: List[str] = ["val_ce", "nmse", "r2"]
+ACCURACY_METRICS: List[str] = ["val_ce", "penalized_nmse", "penalized_r2"]
 CE_METRICS: List[str] = ["val_ce"]
 RANKING_METRICS: Dict[str, List[str]] = {
     "accuracy": ACCURACY_METRICS,
@@ -67,6 +67,38 @@ FALLBACK_RANKINGS: Dict[str, List[str]] = {
 }
 
 
+def usable_ranking_metrics(
+    contrib_tables: Mapping[str, Mapping[str, float]], mode: str = "accuracy"
+) -> List[str]:
+    """Return the finite contribution metrics that can drive a ranking."""
+    if mode not in RANKING_METRICS:
+        raise ValueError(f"Unknown ranking mode {mode!r}; use {list(RANKING_METRICS)}")
+
+    def _has_finite_score(table: Mapping[str, object]) -> bool:
+        for value in table.values():
+            if isinstance(value, Mapping):
+                value = value.get("mean", float("nan"))
+            try:
+                if value is not None and math.isfinite(float(value)):
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    metrics = [
+        m for m in RANKING_METRICS[mode]
+        if m in contrib_tables and _has_finite_score(contrib_tables[m])
+    ]
+    if mode == "accuracy" and len(metrics) == 1 and "val_ce" in metrics:
+        legacy = [
+            m for m in ("val_ce", "nmse", "r2")
+            if m in contrib_tables and _has_finite_score(contrib_tables[m])
+        ]
+        if len(legacy) > 1:
+            metrics = legacy
+    return metrics
+
+
 def ranking_from_contributions(
     contrib_tables: Mapping[str, Mapping[str, float]],
     mode: str = "accuracy",
@@ -79,9 +111,7 @@ def ranking_from_contributions(
     (``accuracy``) we average each layer's per-metric rank (NaN → worst rank)
     and sort ascending mean rank. ``pretrained`` / ``all_params`` are excluded.
     """
-    if mode not in RANKING_METRICS:
-        raise ValueError(f"Unknown ranking mode {mode!r}; use {list(RANKING_METRICS)}")
-    metrics = [m for m in RANKING_METRICS[mode] if m in contrib_tables]
+    metrics = usable_ranking_metrics(contrib_tables, mode)
     if not metrics:
         raise KeyError(
             f"None of {RANKING_METRICS[mode]} present in contributions "
@@ -102,9 +132,14 @@ def ranking_from_contributions(
     for m in metrics:
         table = contrib_tables[m]
 
-        def _key(name: str):
+        def _score(name: str) -> float:
             c = table.get(name, float("nan"))
-            c = float(c) if c is not None else float("nan")
+            if isinstance(c, Mapping):
+                c = c.get("mean", float("nan"))
+            return float(c) if c is not None else float("nan")
+
+        def _key(name: str):
+            c = _score(name)
             if math.isnan(c):
                 return (1, 0.0, name)  # NaN → worst
             return (0, -c, name)
@@ -112,8 +147,7 @@ def ranking_from_contributions(
         order = sorted(layers, key=_key)
         for rank, name in enumerate(order, 1):
             # Layers a metric never scored get the worst possible rank.
-            c = table.get(name, float("nan"))
-            c = float(c) if c is not None else float("nan")
+            c = _score(name)
             rank_sum[name] += rank if not math.isnan(c) else n
 
     return sorted(layers, key=lambda name: (rank_sum[name] / len(metrics), name))
@@ -153,6 +187,15 @@ def resolve_selected_layers(
     return layers, source, f"{rule}_{k} of {mode} ranking"
 
 
+def require_live_phase4_ranking(source: str, contributions_path: Path) -> None:
+    """Reject frozen fallback rankings in a production GPU run."""
+    if source == "fallback":
+        raise RuntimeError(
+            "A live Phase-4 ranking is required, but no valid contribution file was "
+            f"found at {contributions_path}. Refusing to use the frozen CPU fallback."
+        )
+
+
 def load_phase4_ranking(
     contributions_path: Path,
     mode: str = "accuracy",
@@ -168,7 +211,13 @@ def load_phase4_ranking(
         tables = json.loads(Path(contributions_path).read_text(encoding="utf-8"))
         ranking = ranking_from_contributions(tables, mode)
         if ranking:
-            return ranking, "phase4"
+            multiseed = any(
+                isinstance(value, Mapping)
+                for table in tables.values()
+                if isinstance(table, Mapping)
+                for value in table.values()
+            )
+            return ranking, "phase4_multiseed" if multiseed else "phase4"
     except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
         pass
     return list(FALLBACK_RANKINGS[mode]), "fallback"
@@ -221,6 +270,7 @@ def build_phase5_conditions(
     *,
     k: int = 3,
     random_seed: int = 0,
+    random_seeds: Optional[Sequence[int]] = None,
 ) -> Dict[str, Optional[List[str]]]:
     """
     Phase 5 comparison sets.
@@ -245,6 +295,12 @@ def build_phase5_conditions(
     top_exclude = top_k(ranking, max(k, 3))
     cond[f"middle_{k}"] = middle_k(ranking, k)
     cond[f"random_{k}"] = random_k(ranking, k, seed=random_seed, exclude=top_exclude)
+    for seed in dict.fromkeys(random_seeds or [random_seed]):
+        if int(seed) == int(random_seed):
+            continue
+        cond[f"random_{k}_seed{int(seed)}"] = random_k(
+            ranking, k, seed=int(seed), exclude=top_exclude
+        )
     cond[f"bottom_{k}"] = bottom_k(ranking, k)
     cond["all_params"] = None
     return cond

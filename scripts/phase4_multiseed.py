@@ -38,12 +38,20 @@ from data.finetune_dataset import (  # noqa: E402
     collate_finetune,
     load_split_problems,
 )
+from data.splits import split_synthetic_train_validation  # noqa: E402
+from evaluation.generalization import _ci95  # noqa: E402
 from evaluation.layer_contribution import (  # noqa: E402
+    absolute_improvements,
     compute_contributions,
     rank_by_contribution,
+    ranking_stability,
+    reference_improves,
 )
 from models.nesymres_adapter import load_nesymres  # noqa: E402
-from training.single_layer import clone_model, train_selective  # noqa: E402
+from training.single_layer import clone_model  # noqa: E402
+from training.selective_layers import ranking_from_contributions, usable_ranking_metrics  # noqa: E402
+from training.tuning import build_config_grid, seed_everything, tune_selective  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
 # Reuse the single-seed Phase 4 building blocks.
 from phase4_layer_contribution import (  # noqa: E402
@@ -56,14 +64,13 @@ from phase4_layer_contribution import (  # noqa: E402
     make_eval_fit_params,
 )
 
-OUT_DIR = ROOT / "results" / "phase_results" / "phase4_multiseed"
-REPORT = ROOT / "results" / "phase_results" / "phase4_multiseed_report.md"
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase4_multiseed", "phase4_multiseed_report.md")
 
 # Metrics: (key, higher_is_better)
 METRICS = [
     ("val_ce", False),
-    ("nmse", False),
-    ("r2", True),
+    ("penalized_nmse", False),
+    ("penalized_r2", True),
     ("var_f1", True),
     ("sym_rate", True),
 ]
@@ -94,26 +101,14 @@ def run_one_seed(
     fit_eval,
     word2id,
     train_problems,
-    test_problems,
+    validation_problems,
     args,
     seed: int,
     device,
-) -> Dict[str, Dict[str, float]]:
-    """Return {metric: {condition: contribution}} for one seed."""
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-
+) -> Dict[str, Any]:
+    """Return raw scores, guarded contributions, and tuning records for one seed."""
     train_ds = GRNFinetuneDataset(train_problems, word2id, max_points=args.max_points, seed=seed)
-    val_ds = GRNFinetuneDataset(test_problems, word2id, max_points=args.max_points, seed=seed + 1000)
-    gen = torch.Generator()
-    gen.manual_seed(seed)
-    loader = DataLoader(
-        train_ds,
-        batch_size=min(args.batch_size, len(train_ds)),
-        shuffle=True,
-        collate_fn=collate_finetune,
-        generator=gen,
-    )
+    val_ds = GRNFinetuneDataset(validation_problems, word2id, max_points=args.max_points, seed=seed + 1000)
     val_loader = DataLoader(
         val_ds,
         batch_size=min(args.batch_size, max(len(val_ds), 1)),
@@ -123,14 +118,45 @@ def run_one_seed(
 
     conditions = build_phase4_conditions(base_model)
     scores_by_metric: Dict[str, Dict[str, float]] = {m: {} for m, _ in METRICS}
+    tuning_by_condition: Dict[str, Dict[str, object]] = {}
+    equations_by_condition: Dict[str, List[Dict[str, Any]]] = {}
+    configs = build_config_grid(
+        args.lr_grid or [args.lr],
+        args.epoch_grid or [args.epochs],
+        patience=args.patience,
+        min_delta=args.min_delta,
+    )
 
     for name, layers in conditions.items():
-        model = clone_model(base_model)
-        if not (name == "pretrained" or layers == []):
-            train_selective(model, loader, layers, epochs=args.epochs, lr=args.lr, device=device)
+        def train_loader_factory():
+            return DataLoader(
+                train_ds,
+                batch_size=min(args.batch_size, len(train_ds)),
+                shuffle=True,
+                collate_fn=collate_finetune,
+                generator=torch.Generator().manual_seed(seed),
+            )
+
+        if name == "pretrained" or layers == []:
+            seed_everything(seed)
+            model = clone_model(base_model)
+        else:
+            model, tuning = tune_selective(
+                base_model,
+                train_loader_factory,
+                val_loader,
+                layers,
+                configs,
+                device=device,
+                seed=seed,
+            )
+            tuning_by_condition[name] = tuning
         model.eval()
         val_ce = eval_ce_loss(model, val_loader, device) if len(val_ds) else float("nan")
-        agg = eval_problems(model, fit_eval, test_problems)["aggregate"]
+        seed_everything(seed + 10_000)
+        decoded = eval_problems(model, fit_eval, validation_problems)
+        agg = decoded["aggregate"]
+        equations_by_condition[name] = decoded["per_problem"]
         agg["val_ce"] = val_ce
         for m, _ in METRICS:
             scores_by_metric[m][name] = float(agg.get(m, float("nan")))
@@ -139,12 +165,32 @@ def run_one_seed(
             torch.cuda.empty_cache()
 
     contrib: Dict[str, Dict[str, float]] = {}
+    improvements: Dict[str, Dict[str, float]] = {}
+    statuses: Dict[str, Dict[str, object]] = {}
     for m, higher in METRICS:
+        scores = scores_by_metric[m]
+        improvements[m] = absolute_improvements(scores, higher_is_better=higher)
+        base = float(scores.get("pretrained", float("nan")))
+        full = float(scores.get("all_params", float("nan")))
+        valid_reference = reference_improves(base, full, higher_is_better=higher)
+        statuses[m] = {
+            "base": base,
+            "full": full,
+            "higher_is_better": higher,
+            "full_improves_base": valid_reference,
+        }
         try:
-            contrib[m] = compute_contributions(scores_by_metric[m], higher_is_better=higher)
+            contrib[m] = compute_contributions(scores, higher_is_better=higher)
         except KeyError:
             contrib[m] = {}
-    return contrib
+    return {
+        "raw_scores": scores_by_metric,
+        "absolute_improvements": improvements,
+        "contributions": contrib,
+        "contribution_status": statuses,
+        "tuning": tuning_by_condition,
+        "equations": equations_by_condition,
+    }
 
 
 def aggregate(per_seed: List[Dict[str, Dict[str, float]]]) -> Dict[str, Dict[str, Dict[str, float]]]:
@@ -174,11 +220,13 @@ def aggregate(per_seed: List[Dict[str, Dict[str, float]]]) -> Dict[str, Dict[str
             n = len(arr)
             std = float(arr.std(ddof=1)) if n > 1 else 0.0
             sem = std / math.sqrt(n) if n > 0 else float("nan")
+            ci = _ci95(arr.tolist())
             stats[l] = {
                 "mean": float(arr.mean()),
                 "std": std,
                 "sem": float(sem),
-                "ci95": float(1.96 * sem),
+                "ci95": float(ci["ci95"]),
+                "ci_method": "student_t",
                 "n": float(n),
                 "top3_frac": top3_counts.get(l, 0) / len(per_seed),
             }
@@ -192,9 +240,15 @@ def main() -> int:
     parser.add_argument("--data-dir", default=str(ROOT / "results" / "synthetic" / "diverse_v1"))
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr-grid", type=float, nargs="+", default=None)
+    parser.add_argument("--epoch-grid", type=int, nargs="+", default=None)
+    parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument("--min-delta", type=float, default=1e-4)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-points", type=int, default=80)
     parser.add_argument("--eval-limit", type=int, default=0)
+    parser.add_argument("--validation-fraction", type=float, default=0.2)
+    parser.add_argument("--split-seed", type=int, default=1729)
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
     parser.add_argument("--bfgs-stop-time", type=float, default=0.5)
@@ -208,55 +262,208 @@ def main() -> int:
     fit_eval = make_eval_fit_params(params_fit, args.beam_size, args.bfgs_restarts, args.bfgs_stop_time)
     word2id = json.loads(EQ_SETTING.read_text(encoding="utf-8"))["word2id"]
 
-    train_problems = load_split_problems(data_dir, "train")
-    test_problems = load_split_problems(data_dir, "test")
+    all_train_problems = load_split_problems(data_dir, "train")
+    train_problems, validation_problems = split_synthetic_train_validation(
+        all_train_problems,
+        validation_fraction=args.validation_fraction,
+        seed=args.split_seed,
+    )
     if args.eval_limit > 0:
-        test_problems = test_problems[: args.eval_limit]
-    log(f"train={len(train_problems)} test={len(test_problems)}")
+        validation_problems = validation_problems[: args.eval_limit]
+    log(f"train={len(train_problems)} validation={len(validation_problems)} (test unused)")
 
     per_seed: List[Dict[str, Dict[str, float]]] = []
+    absolute_per_seed: List[Dict[str, Dict[str, float]]] = []
+    status_per_seed: List[Dict[str, Dict[str, object]]] = []
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for seed in args.seeds:
         t0 = time.time()
         log(f"\n=== seed {seed} ===")
-        contrib = run_one_seed(
-            base_model, fit_eval, word2id, train_problems, test_problems, args, seed, device
+        run = run_one_seed(
+            base_model, fit_eval, word2id, train_problems, validation_problems, args, seed, device
         )
+        contrib = run["contributions"]
         per_seed.append(contrib)
+        absolute_per_seed.append({
+            metric: {
+                layer: value for layer, value in table.items() if layer != "all_params"
+            }
+            for metric, table in run["absolute_improvements"].items()
+        })
+        status_per_seed.append(run["contribution_status"])
         (OUT_DIR / f"contrib_seed{seed}.json").write_text(
             json.dumps(_sanitize(contrib), indent=2), encoding="utf-8"
         )
+        for key, filename in (
+            ("raw_scores", f"raw_scores_seed{seed}.json"),
+            ("absolute_improvements", f"absolute_improvements_seed{seed}.json"),
+            ("contribution_status", f"contribution_status_seed{seed}.json"),
+            ("tuning", f"tuning_seed{seed}.json"),
+            ("equations", f"equations_seed{seed}.json"),
+        ):
+            (OUT_DIR / filename).write_text(
+                json.dumps(_sanitize(run[key]), indent=2), encoding="utf-8"
+            )
         log(f"  seed {seed} done ({time.time() - t0:.1f}s)")
 
     agg = aggregate(per_seed)
+    absolute_agg = aggregate(absolute_per_seed)
+    reference_summary = {
+        metric: {
+            "valid_seed_count": sum(
+                bool(status.get(metric, {}).get("full_improves_base", False))
+                for status in status_per_seed
+            ),
+            "seed_count": len(status_per_seed),
+        }
+        for metric, _ in METRICS
+    }
+    # Do not select layers from a normalized metric unless full FT is an
+    # improving reference in every paired seed. Partial-seed ranking would be
+    # biased toward seeds where the denominator happened to be valid.
+    for metric, summary in reference_summary.items():
+        if summary["valid_seed_count"] != summary["seed_count"]:
+            for stats in agg.get(metric, {}).values():
+                stats.update({
+                    "mean": float("nan"),
+                    "std": float("nan"),
+                    "sem": float("nan"),
+                    "ci95": float("nan"),
+                    "n": 0.0,
+                    "top3_frac": 0.0,
+                })
+    source_by_metric = {
+        metric: (
+            "normalized_full_reference"
+            if summary["valid_seed_count"] == summary["seed_count"]
+            else "absolute_improvement_over_pretrained"
+        )
+        for metric, summary in reference_summary.items()
+    }
+    ranking_scores = {
+        metric: (
+            agg.get(metric, {})
+            if source == "normalized_full_reference"
+            else absolute_agg.get(metric, {})
+        )
+        for metric, source in source_by_metric.items()
+    }
+    selected_per_seed = [
+        {
+            metric: (
+                per_seed[index].get(metric, {})
+                if source == "normalized_full_reference"
+                else absolute_per_seed[index].get(metric, {})
+            )
+            for metric, source in source_by_metric.items()
+        }
+        for index in range(len(per_seed))
+    ]
+    stability = ranking_stability(selected_per_seed, source_by_metric)
+    layer_rankings = {}
+    for mode in ("accuracy", "ce"):
+        try:
+            layer_rankings[mode] = {
+                "order": ranking_from_contributions(ranking_scores, mode),
+                "metrics": usable_ranking_metrics(ranking_scores, mode),
+            }
+        except (KeyError, ValueError):
+            layer_rankings[mode] = {"order": [], "metrics": []}
+    importance_evidence = {}
+    for metric, table in ranking_scores.items():
+        finite = {
+            layer: stats for layer, stats in table.items()
+            if np.isfinite(float(stats.get("mean", float("nan"))))
+        }
+        ordered = sorted(finite, key=lambda layer: (-finite[layer]["mean"], layer))
+        supported = [
+            layer for layer in ordered
+            if np.isfinite(float(finite[layer].get("ci95", float("nan"))))
+            and finite[layer]["mean"] - finite[layer]["ci95"] > 0
+        ]
+        importance_evidence[metric] = {
+            "score_source": source_by_metric[metric],
+            "best_layer": ordered[0] if ordered else None,
+            "best_mean_score": finite[ordered[0]]["mean"] if ordered else float("nan"),
+            "layers_with_positive_mean": [layer for layer in ordered if finite[layer]["mean"] > 0],
+            "layers_with_95pct_ci_above_zero": supported,
+            "any_layer_supported": bool(supported),
+            "interpretation": (
+                "ranking alone is relative; call a layer improving only when its score CI is above zero"
+            ),
+        }
     (OUT_DIR / "contrib_aggregate.json").write_text(
         json.dumps(_sanitize(agg), indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "contribution_status_aggregate.json").write_text(
+        json.dumps(reference_summary, indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "absolute_improvements_aggregate.json").write_text(
+        json.dumps(_sanitize(absolute_agg), indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "layer_ranking_scores.json").write_text(
+        json.dumps(_sanitize(ranking_scores), indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "layer_ranking_metadata.json").write_text(
+        json.dumps({
+            "rule": "use normalized contribution only when full FT improves in every seed; otherwise use absolute improvement over pretrained",
+            "metric_sources": source_by_metric,
+            "seeds": args.seeds,
+        }, indent=2),
+        encoding="utf-8",
+    )
+    (OUT_DIR / "layer_rankings.json").write_text(
+        json.dumps(layer_rankings, indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "layer_importance_evidence.json").write_text(
+        json.dumps(_sanitize(importance_evidence), indent=2), encoding="utf-8"
+    )
+    (OUT_DIR / "ranking_stability.json").write_text(
+        json.dumps(_sanitize(stability), indent=2), encoding="utf-8"
     )
 
     # Report
     lines = [
         "# Phase 4 (multi-seed): layer contribution with CI",
         "",
-        f"- Data: `{data_dir.as_posix()}` (train {len(train_problems)} / test {len(test_problems)})",
-        f"- Seeds: {args.seeds}  |  epochs: {args.epochs}, lr: {args.lr}",
+        f"- Data: `{data_dir.as_posix()}` (train {len(train_problems)} / validation {len(validation_problems)})",
+        "- Validation is held out by motif; the test split is not used for layer selection.",
+        f"- Seeds: {args.seeds}",
+        f"- Validation tuning grid: lr={args.lr_grid or [args.lr]}, "
+        f"epochs={args.epoch_grid or [args.epochs]}, patience={args.patience}",
         f"- Device: `{device}`",
         "",
         "Contribution `C=1` means the single layer recovers the full-FT gain; `C=0` "
         "means no better than pretrained. **A layer is only 'high-contribution' if its "
         "CI stays clearly above the random/other layers across seeds.**",
+        "If full FT does not improve on pretrained for a metric in every seed, normalized "
+        "contribution is recorded as undefined and the live ranking automatically uses "
+        "absolute improvement over pretrained from this same validation run.",
         "",
     ]
+    lines += [
+        "## Full-FT reference validity",
+        "",
+        "| metric | seeds where full improves base | total seeds |",
+        "|---|---:|---:|",
+    ]
+    for metric, _ in METRICS:
+        summary = reference_summary[metric]
+        lines.append(
+            f"| `{metric}` | {summary['valid_seed_count']} | {summary['seed_count']} |"
+        )
+    lines.append("")
     for m, higher in METRICS:
-        stats = agg.get(m, {})
+        stats = ranking_scores.get(m, {})
         # order by mean desc (NaN last)
         order = sorted(
             stats.items(),
             key=lambda kv: (1, 0.0) if math.isnan(kv[1]["mean"]) else (0, -kv[1]["mean"]),
         )
         lines += [
-            f"## {m}",
+            f"## {m} (`{source_by_metric[m]}`)",
             "",
-            "| rank | layer | mean C | 95% CI | std | top-3 stability |",
+            "| rank | layer | mean ranking score | 95% CI | std | top-3 stability |",
             "|------|-------|--------|--------|-----|-----------------|",
         ]
         for i, (layer, s) in enumerate(order, 1):
@@ -265,6 +472,34 @@ def main() -> int:
                 f"{fmt(s['std'])} | {s['top3_frac']*100:.0f}% |"
             )
         lines.append("")
+
+    lines += [
+        "## Seed-to-seed ranking stability",
+        "",
+        "| metric | score source | mean Spearman | mean Kendall |",
+        "|---|---|---:|---:|",
+    ]
+    for metric, source in source_by_metric.items():
+        item = stability[metric]
+        lines.append(
+            f"| `{metric}` | `{source}` | {fmt(item['mean_spearman'])} | "
+            f"{fmt(item['mean_kendall'])} |"
+        )
+    lines.append("")
+
+    lines += [
+        "## Evidence that a layer actually improves over pretrained",
+        "",
+        "| metric | best layer | best mean score | layers with 95% CI above zero |",
+        "|---|---|---:|---|",
+    ]
+    for metric, item in importance_evidence.items():
+        supported = ", ".join(f"`{name}`" for name in item["layers_with_95pct_ci_above_zero"])
+        lines.append(
+            f"| `{metric}` | `{item['best_layer']}` | {fmt(item['best_mean_score'])} | "
+            f"{supported or 'none'} |"
+        )
+    lines.append("")
 
     lines += [
         "## How to read this",

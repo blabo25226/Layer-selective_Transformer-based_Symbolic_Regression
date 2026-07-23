@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -23,21 +24,27 @@ from data.finetune_dataset import (  # noqa: E402
     instantiate_expr,
     load_split_problems,
 )
+from data.splits import split_synthetic_train_validation  # noqa: E402
+from evaluation.aggregation import aggregate_prediction_scores, true_variables  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.equation_records import dataset_variable_mapping, make_equation_record  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from training.selective_layers import (  # noqa: E402
     build_phase5_conditions,
     load_phase4_ranking,
+    usable_ranking_metrics,
 )
-from training.single_layer import clone_model, train_selective  # noqa: E402
+from training.single_layer import clone_model  # noqa: E402
+from training.tuning import build_config_grid, seed_everything, tune_selective  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
 DATA_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
-WEIGHTS = ROOT / "NSRS" / "weights" / "10M.ckpt"
-CONFIG = ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml"
-EQ_SETTING = ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json"
-OUT_DIR = ROOT / "results" / "phase_results" / "phase5"
-REPORT = ROOT / "results" / "phase_results" / "phase5_report.md"
-PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4" / "contributions.json"
+# Checkpoint/config env-overridable for GPU runs (e.g. LTSR_WEIGHTS=.../100M.ckpt)
+WEIGHTS = Path(os.environ.get("LTSR_WEIGHTS", str(ROOT / "NSRS" / "weights" / "10M.ckpt")))
+CONFIG = Path(os.environ.get("LTSR_CONFIG", str(ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml")))
+EQ_SETTING = Path(os.environ.get("LTSR_EQ_SETTING", str(ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json")))
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase5", "phase5_report.md")
+PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4_multiseed" / "contrib_aggregate.json"
 
 
 def log(msg: str) -> None:
@@ -84,20 +91,13 @@ def eval_problems(model, params_fit, problems) -> Dict[str, Any]:
     import io
     import warnings
 
-    keys = [
-        "nmse",
-        "r2",
-        "var_f1",
-        "sym_recovery",
-        "complexity",
-        "valid_pred",
-    ]
-    buckets: Dict[str, List[float]] = {k: [] for k in keys}
     per: List[Dict[str, Any]] = []
 
     for ds in problems:
         true_expr = instantiate_expr(ds)
         expr = ""
+        out: Dict[str, Any] = {}
+        failure_reason = None
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -106,32 +106,27 @@ def eval_problems(model, params_fit, problems) -> Dict[str, Any]:
                 ):
                     out = predict_equation(model, params_fit, ds.X, ds.y, quiet=True)
                 expr = out["equation"]
-        except Exception:
+        except Exception as exc:
             expr = ""
+            failure_reason = f"{type(exc).__name__}: {exc}"
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names)
         sc = score_prediction(
-            ds.y, y_hat, expr, ds.spec.variable_names, true_expr=true_expr
+            ds.y, y_hat, expr, true_variables(true_expr, ds.spec.variable_names),
+            true_expr=true_expr, X=ds.X, variable_names=ds.spec.variable_names,
         )
-        per.append({"eq_id": ds.spec.eq_id, "pred": expr, "true": true_expr, **sc})
-        for k in keys:
-            v = sc[k]
-            if np.isfinite(v):
-                buckets[k].append(float(v))
-
-    agg: Dict[str, float] = {
-        "n_eval": float(len(problems)),
-        "n_valid": float(len(buckets["nmse"])),
-        "nmse": float(np.median(buckets["nmse"])) if buckets["nmse"] else float("inf"),
-        "r2": float(np.median(buckets["r2"])) if buckets["r2"] else float("-inf"),
-        "var_f1": float(np.mean(buckets["var_f1"])) if buckets["var_f1"] else float("nan"),
-        "sym_rate": float(np.mean(buckets["sym_recovery"]))
-        if buckets["sym_recovery"]
-        else 0.0,
-        "complexity": float(np.mean(buckets["complexity"]))
-        if buckets["complexity"]
-        else float("nan"),
-    }
-    return {"aggregate": agg, "per_problem": per}
+        per.append(make_equation_record(
+            eq_id=ds.spec.eq_id,
+            predicted_expr=expr,
+            variable_names=ds.spec.variable_names,
+            mapping=dataset_variable_mapping(ds),
+            scores=sc,
+            true_expr=true_expr,
+            candidate_expressions=out.get("all_preds", []),
+            decoder="nesymres_beam_bfgs",
+            decoder_metadata={"bfgs_loss": out.get("bfgs_loss")},
+            failure_reason=failure_reason,
+        ))
+    return {"aggregate": aggregate_prediction_scores(per), "per_problem": per}
 
 
 def peak_mem_mb(device: torch.device) -> float:
@@ -162,10 +157,21 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr-grid", type=float, nargs="+", default=None)
+    parser.add_argument("--epoch-grid", type=int, nargs="+", default=None)
+    parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument("--min-delta", type=float, default=1e-4)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-points", type=int, default=80)
     parser.add_argument("--eval-limit", type=int, default=0, help="0 = all test")
+    parser.add_argument("--validation-fraction", type=float, default=0.2)
+    parser.add_argument("--split-seed", type=int, default=1729)
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--k", type=int, default=3, help="k for mid/random/bottom")
+    parser.add_argument(
+        "--random-layer-seeds", type=int, nargs="+", default=[0],
+        help="Independent random layer-set draws; the first keeps the random_k name",
+    )
     parser.add_argument(
         "--ranking",
         choices=["accuracy", "ce"],
@@ -176,7 +182,12 @@ def main() -> int:
         "--contributions",
         default=str(PHASE4_CONTRIB),
         help="Phase 4 contributions.json to derive the ranking from "
-        "(falls back to frozen constant if missing)",
+        "(live output is required unless fallback is explicitly allowed)",
+    )
+    parser.add_argument(
+        "--allow-fallback-ranking",
+        action="store_true",
+        help="Allow the frozen CPU-pilot ranking when live Phase-4 output is invalid",
     )
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
@@ -194,7 +205,17 @@ def main() -> int:
     log(f"Device: {device} | data: {data_dir}")
 
     ranking, ranking_source = load_phase4_ranking(Path(args.contributions), args.ranking)
-    if ranking_source == "phase4":
+    if ranking_source == "fallback" and not args.allow_fallback_ranking:
+        log(
+            "ERROR: live Phase-4 contribution ranking is missing or invalid. "
+            "Refusing to use the frozen CPU-pilot fallback; fix/tune Phase 4 first."
+        )
+        return 2
+    ranking_metrics: List[str] = []
+    if ranking_source in ("phase4", "phase4_multiseed"):
+        tables = json.loads(Path(args.contributions).read_text(encoding="utf-8"))
+        ranking_metrics = usable_ranking_metrics(tables, args.ranking)
+    if ranking_source in ("phase4", "phase4_multiseed"):
         log(f"Ranking ({args.ranking}) from Phase 4 `{args.contributions}`: {ranking}")
     else:
         log(
@@ -213,24 +234,27 @@ def main() -> int:
         eq_setting = json.load(f)
     word2id = eq_setting["word2id"]
 
-    train_problems = load_split_problems(data_dir, "train")
+    all_train_problems = load_split_problems(data_dir, "train")
+    train_problems, validation_problems = split_synthetic_train_validation(
+        all_train_problems,
+        validation_fraction=args.validation_fraction,
+        seed=args.split_seed,
+    )
     test_problems = load_split_problems(data_dir, "test")
     if args.eval_limit > 0:
         test_problems = test_problems[: args.eval_limit]
 
-    train_ds = GRNFinetuneDataset(train_problems, word2id, max_points=args.max_points, seed=0)
-    val_ds = GRNFinetuneDataset(test_problems, word2id, max_points=args.max_points, seed=1)
-    log(f"Train FT: {len(train_ds)}; eval test: {len(test_problems)}")
+    train_ds = GRNFinetuneDataset(
+        train_problems, word2id, max_points=args.max_points, seed=args.seed
+    )
+    val_ds = GRNFinetuneDataset(
+        validation_problems, word2id, max_points=args.max_points, seed=args.seed + 1000
+    )
+    log(f"Train FT: {len(train_ds)}; validation: {len(validation_problems)}; test: {len(test_problems)}")
     if len(train_ds) == 0:
         log("No tokenizable train equations.")
         return 1
 
-    loader = DataLoader(
-        train_ds,
-        batch_size=min(args.batch_size, len(train_ds)),
-        shuffle=True,
-        collate_fn=collate_finetune,
-    )
     val_loader = DataLoader(
         val_ds,
         batch_size=min(args.batch_size, max(len(val_ds), 1)),
@@ -238,22 +262,42 @@ def main() -> int:
         collate_fn=collate_finetune,
     )
 
-    conditions = build_phase5_conditions(ranking, k=args.k, random_seed=0)
+    conditions = build_phase5_conditions(
+        ranking,
+        k=args.k,
+        random_seed=args.random_layer_seeds[0],
+        random_seeds=args.random_layer_seeds,
+    )
     if args.conditions.strip():
         wanted = {c.strip() for c in args.conditions.split(",")}
         conditions = {k: v for k, v in conditions.items() if k in wanted}
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     results: List[Dict[str, Any]] = []
+    tuning_configs = build_config_grid(
+        args.lr_grid or [args.lr],
+        args.epoch_grid or [args.epochs],
+        patience=args.patience,
+        min_delta=args.min_delta,
+    )
 
     for name, layers in conditions.items():
         log(f"\n=== {name} | layers={layers} ===")
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
         t0 = time.time()
-        model = clone_model(base_model)
+        def train_loader_factory():
+            return DataLoader(
+                train_ds,
+                batch_size=min(args.batch_size, len(train_ds)),
+                shuffle=True,
+                collate_fn=collate_finetune,
+                generator=torch.Generator().manual_seed(args.seed),
+            )
 
         if name == "pretrained" or layers == []:
+            seed_everything(args.seed)
+            model = clone_model(base_model)
             train_info = {
                 "final_loss": float("nan"),
                 "trainable": 0.0,
@@ -261,15 +305,20 @@ def main() -> int:
                 "epochs": 0.0,
                 "trainable_fraction": 0.0,
             }
+            tuning = None
         else:
-            train_info = train_selective(
-                model,
-                loader,
+            model, tuning = tune_selective(
+                base_model,
+                train_loader_factory,
+                val_loader,
                 layers,
-                epochs=args.epochs,
-                lr=args.lr,
+                tuning_configs,
                 device=device,
+                seed=args.seed,
             )
+            train_info = tuning["train"]
+
+        loader = train_loader_factory()
 
         model.eval()
         train_ce = (
@@ -290,7 +339,10 @@ def main() -> int:
             "condition": name,
             "layers": layers,
             "ranking": args.ranking,
+            "ranking_order": ranking,
+            "ranking_metrics": ranking_metrics,
             "train": train_info,
+            "tuning": tuning,
             "train_ce": train_ce,
             "val_ce": val_ce,
             "overfit_gap": gap,
@@ -322,11 +374,14 @@ def main() -> int:
         "# Phase 5: high-contribution selective fine-tuning",
         "",
         f"- Ranking mode: `{args.ranking}` "
-        f"({'Phase 4 contributions.json' if ranking_source == 'phase4' else 'FROZEN FALLBACK'})",
+        f"({ranking_source if ranking_source != 'fallback' else 'FROZEN FALLBACK'})",
+        f"- Ranking metrics actually used: `{', '.join(ranking_metrics) or 'frozen fallback'}`",
         f"- Order: `{', '.join(ranking)}`",
         f"- k={args.k} for middle / random / bottom",
+        f"- Random layer-set seeds: {args.random_layer_seeds}",
         f"- Train FT: {len(train_ds)}; test eval: {len(test_problems)}",
-        f"- Epochs: {args.epochs}, lr: {args.lr}",
+        f"- Validation tuning grid: lr={args.lr_grid or [args.lr]}, "
+        f"epochs={args.epoch_grid or [args.epochs]}, patience={args.patience}",
         f"- Decode: beam={args.beam_size}, BFGS restarts={args.bfgs_restarts}, "
         f"stop_time={args.bfgs_stop_time}s",
         f"- Device: `{device}`",
@@ -367,8 +422,8 @@ def main() -> int:
     if base and full:
         l_base = float(base["val_ce"])
         l_full = float(full["val_ce"])
-        n_base = float(base["eval"]["nmse"])
-        n_full = float(full["eval"]["nmse"])
+        n_base = float(base["eval"]["penalized_nmse"])
+        n_full = float(full["eval"]["penalized_nmse"])
         lines.extend(
             [
                 "",
@@ -385,12 +440,12 @@ def main() -> int:
             if r["condition"] in ("pretrained", "all_params"):
                 continue
             lk = float(r["val_ce"])
-            nk = float(r["eval"]["nmse"])
+            nk = float(r["eval"]["penalized_nmse"])
             c_ce = (
-                (l_base - lk) / (l_base - l_full) if abs(l_base - l_full) > 1e-12 else float("nan")
+                (l_base - lk) / (l_base - l_full) if l_full < l_base - 1e-12 else float("nan")
             )
             c_nmse = (
-                (n_base - nk) / (n_base - n_full) if abs(n_base - n_full) > 1e-12 else float("nan")
+                (n_base - nk) / (n_base - n_full) if n_full < n_base - 1e-12 else float("nan")
             )
             frac = float(r["train"].get("trainable_fraction", 0.0))
             lines.append(
@@ -400,7 +455,7 @@ def main() -> int:
     # Rank by val CE then NMSE
     ranked = sorted(
         [r for r in results if r["condition"] != "pretrained"],
-        key=lambda r: (r["val_ce"], r["eval"]["nmse"]),
+        key=lambda r: (r["val_ce"], r["eval"]["penalized_nmse"]),
     )
     lines.extend(
         [
@@ -420,25 +475,30 @@ def main() -> int:
     # --- H2 honest check: does the selected top-k actually beat the random control? ---
     def _cond_nmse(cname: str) -> float:
         r = by_name.get(cname)
-        return float(r["eval"]["nmse"]) if r else float("nan")
+        return float(r["eval"]["penalized_nmse"]) if r else float("nan")
 
     def _cond_ce(cname: str) -> float:
         r = by_name.get(cname)
         return float(r["val_ce"]) if r else float("nan")
 
     top_name = f"top_{args.k}"
-    rand_name = f"random_{args.k}"
+    rand_names = [
+        name for name in by_name
+        if name == f"random_{args.k}" or name.startswith(f"random_{args.k}_seed")
+    ]
     mid_name = f"middle_{args.k}"
-    top_nmse, rand_nmse = _cond_nmse(top_name), _cond_nmse(rand_name)
-    top_ce, rand_ce = _cond_ce(top_name), _cond_ce(rand_name)
+    top_nmse = _cond_nmse(top_name)
+    rand_nmse = float(np.mean([_cond_nmse(name) for name in rand_names])) if rand_names else float("nan")
+    top_ce = _cond_ce(top_name)
+    rand_ce = float(np.mean([_cond_ce(name) for name in rand_names])) if rand_names else float("nan")
     lines.extend(
         [
             "",
             "## H2 check: selected layers vs random control",
             "",
             f"- `{top_name}` NMSE={fmt(top_nmse)}, val CE={fmt(top_ce)}",
-            f"- `{rand_name}` NMSE={fmt(rand_nmse)}, val CE={fmt(rand_ce)} "
-            "(random now excludes the top-3 layers — A-3 fix)",
+            f"- mean of `{rand_names}`: NMSE={fmt(rand_nmse)}, val CE={fmt(rand_ce)} "
+            "(every random set excludes the top-3 layers)",
             f"- `{mid_name}` NMSE={fmt(_cond_nmse(mid_name))}, val CE={fmt(_cond_ce(mid_name))}",
             "",
             (
@@ -462,8 +522,8 @@ def main() -> int:
             "- Transfer proxy: Phase 1 train/test split uses OOD parameter ranges "
             "(same equation families).",
             "- Overfit gap = val_CE − train_CE (larger → more overfit).",
-            "- Layer order derived from Phase 4 `contributions.json` (mode "
-            f"`{args.ranking}`); `random_k` seed=0 excludes top-3 for a fair control.",
+            "- Layer order derived from the live Phase 4 ranking score file (mode "
+            f"`{args.ranking}`); random seeds={args.random_layer_seeds} exclude top-3.",
             "- Light BFGS decode; raise flags for paper-quality decode metrics.",
             "",
         ]

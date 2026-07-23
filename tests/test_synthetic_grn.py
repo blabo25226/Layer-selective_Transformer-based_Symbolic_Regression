@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from typing import Optional
 from pathlib import Path
 
 import numpy as np
@@ -28,8 +27,8 @@ def test_activation_rhs_matches():
     assert np.all(np.isfinite(out))
 
 
-def test_suite_and_io(tmp_path: Optional[Path] = None):
-    out = tmp_path if tmp_path is not None else ROOT / "results" / "synthetic" / "_test_tmp"
+def test_suite_and_io(tmp_path: Path):
+    out = tmp_path
     datasets = build_phase1_suite(n_points=20, seed=1)
     assert len(datasets) > 10
     families = {d.spec.family for d in datasets}
@@ -45,8 +44,3 @@ def test_suite_and_io(tmp_path: Optional[Path] = None):
     np.testing.assert_allclose(loaded.X, first.X)
     np.testing.assert_allclose(loaded.y, first.y)
 
-
-if __name__ == "__main__":
-    test_activation_rhs_matches()
-    test_suite_and_io()
-    print("tests passed")

@@ -10,10 +10,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from evaluation.generalization import (  # noqa: E402
+    _ci95,
     aggregate_lodo,
     generalization_gap,
     rank_by_generalization,
 )
+
+
+def test_ci95_uses_student_t_for_small_samples():
+    ci = _ci95([1.0, 2.0, 3.0])
+    assert ci["ci_method"] == "student_t"
+    assert ci["ci95"] > 1.96 * ci["sem"]
 
 
 def test_gap_direction():

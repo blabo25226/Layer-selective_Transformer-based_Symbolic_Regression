@@ -29,13 +29,15 @@ def train_selective(
     device: Optional[torch.device] = None,
     val_loader: Optional[DataLoader] = None,
     patience: int = 0,
+    min_delta: float = 1e-4,
 ) -> Dict[str, float]:
     """
     Fine-tune `model` with only `layer_names` trainable.
     If layer_names is None, train all parameters.
 
-    If ``val_loader`` and ``patience>0``, early-stop on validation CE
-    (keeps best weights) to reduce overfit risk.
+    If ``val_loader`` is supplied, restore the weights with the best validation
+    CE. A positive ``patience`` additionally enables early stopping; zero runs
+    every requested epoch but still restores the best checkpoint.
     """
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -55,6 +57,7 @@ def train_selective(
             "total": total,
             "epochs": 0,
             "best_val_ce": float("nan"),
+            "best_epoch": 0.0,
             "stopped_epoch": 0.0,
         }
 
@@ -62,6 +65,7 @@ def train_selective(
     last_loss = float("nan")
     best_val = float("inf")
     best_state = None
+    best_epoch = 0
     bad = 0
     stopped_epoch = 0
 
@@ -89,15 +93,16 @@ def train_selective(
         last_loss = float(sum(epoch_losses) / max(len(epoch_losses), 1))
         stopped_epoch = ep + 1
 
-        if val_loader is not None and patience > 0:
+        if val_loader is not None:
             val_ce = _ce(val_loader)
-            if val_ce < best_val - 1e-4:
+            if val_ce < best_val - min_delta:
                 best_val = val_ce
                 best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                best_epoch = ep + 1
                 bad = 0
             else:
                 bad += 1
-                if bad >= patience:
+                if patience > 0 and bad >= patience:
                     break
 
     if best_state is not None:
@@ -110,5 +115,6 @@ def train_selective(
         "epochs": float(stopped_epoch),
         "trainable_fraction": float(trainable / total) if total else 0.0,
         "best_val_ce": float(best_val) if best_state is not None else float("nan"),
+        "best_epoch": float(best_epoch),
         "stopped_epoch": float(stopped_epoch),
     }
