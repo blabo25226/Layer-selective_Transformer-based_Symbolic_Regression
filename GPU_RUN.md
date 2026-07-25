@@ -609,3 +609,94 @@ Get-PhysicalDisk | Select-Object FriendlyName,MediaType,Size,BusType
 powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE
 wsl --status
 ```
+
+## 付録B. 実際の本実験runの記録とパイプライン改修（2026-07-23〜25）
+
+本実験を進める中で発見・修正した不具合、追加した機能、実際のrun履歴、設定変更を記録する。
+将来の再現・再開の参照用。コミットはすべて`gpu-scale-prep`（HEAD=`75d84db`、`origin`と同期）。
+
+### B.1 本実験中に発見・修正したバグ
+
+- **`17a31c7` Phase 6 TPSRをPOSIXで動くように（pathlibガード＋UCT配線＋集約None耐性）**
+  - `TPSR/symbolicregression/e2e_model.py`（と`scripts/phase0_tpsr_smoke.py`）が無条件に
+    `pathlib.PosixPath = pathlib.WindowsPath`を実行し、Linux/WSLでは`pathlib.Path()`が未対応の
+    `WindowsPath`を生成→直後の`networkx` importが`NotImplementedError`で全滅していた。`os.name=="nt"`でガード。
+  - `src/models/tpsr_adapter.py`が`UCT(...)`に`alg`を渡さず既定の`var_p_uct`へ落ち、同梱MCTSに無い
+    `ChanceNode.prob`で`AttributeError`。宣言済みの`alg=params.uct_alg`（="uct"）と`ucb_base`を配線。
+  - `scripts/aggregate_phase6_runs.py`が有効予測0件セルの`complexity=None`で`float(None)`クラッシュ→None安全化。
+  - 結果：TPSRがend-to-endで実式を返すようになった。
+
+- **`3d139ba` symbolic_recoveryのSymPyに実時間タイムアウト**
+  - `src/evaluation/equation_metrics.py`の`symbolic_recovery`が`.equals()`/`simplify()`で、ある病的な
+    予測式に対しSymPyの多項式因数分解（dmp_zz_wang Hensel lifting）が事実上停止し、Phase 5が1問題で
+    **4時間以上ハング**した（CPU busyだが例外を出さずtry/exceptで捕まらない）。
+  - `to_skeleton`と`symbolic_recovery`の重いSymPy呼び出しをSIGALRMベースの10秒タイムアウトで保護。
+    超過は「等価と証明できず（=未回復・保守側）」扱いでスコアを膨らませない。正常式は<1秒。main threadのみ作動。
+
+- **`75d84db` seed並列(A)とphase-resume(C)を`run_gpu_pipeline.sh`へ追加（既定OFFで挙動不変）**
+  - **A: `MAX_PARALLEL_SEEDS`**（既定1）。Phase 5/6/7/8のper-seedループを有界並列で起動。各seedは
+    無変更の独立プロセスなので**出力はバイト一致**（速度のみ向上）。seed数（=5）が上限。
+  - **C: `RESUME`**（既定0）。既存run dirへ再入し、最終出力が存在するPhase/seedをskip。
+    `run_manifest.py`に`resume`アクション（元の来歴を保持しつつresume記録を追記）を追加。
+  - スレッド数は変更していない（数値のバイト一致を守るため）。CPU競合が問題なら手動で`OMP_NUM_THREADS`等を絞る。
+
+### B.2 実際のrun履歴（_03 → _04 → _05）
+
+- **`paper_gpu_20260723_03`**：Phase 5でSymPyハング（`3d139ba`で修正）。破棄。
+- **`paper_gpu_20260723_04`**：`3d139ba`で起動。Phase 4（全5 seed, 約6.3h）完了。Phase 5途中で、
+  最適化版へ移行するため停止。**Phase 4成果物と`input_data/`は温存**。
+- **`paper_gpu_20260723_05`**（現行）：最適化版`75d84db`で起動。**_04の完了済み`phase4_multiseed/`と
+  `input_data/`を_05のrun dirへコピーし、`RESUME=1`でPhase 4生成をスキップ**（=6.3hを再計算しない）。
+  Phase 4コードは`3d139ba`と`75d84db`で同一のため、救済したPhase 4出力は本runのcommitが生成するものと一致する
+  （`results/runs/paper_gpu_20260723_05_full/PROVENANCE_NOTE.txt`に明記）。
+
+### B.3 中断とresume（環境の教訓）
+
+- _05は一度、**セッション/PCを閉じた際にtmuxごと停止**した（RDPの「切断」ではなく、サインアウト/WSL終了/
+  PCスリープ・再起動のいずれか）。§1のとおりtmuxはRDP切断では生き残るが、これらでは死ぬ。
+- 完了済みのPhase 4/5はディスクに残り、`RESUME=1 RUN_SMOKE=0`でPhase 6から再開でき、損失はほぼゼロだった。
+- 教訓：長時間runでは離席時に必ずRDPを**「切断」**。サインアウト/スリープ/シャットダウン/`wsl --shutdown`は避ける。
+  resume(C)はこの種の中断への保険として機能する。
+
+### B.4 並列度の引き上げ（`MAX_PARALLEL_SEEDS=5`）
+
+- 当初`MAX_PARALLEL_SEEDS=3`で起動したが、実測で1プロセス≈VRAM 1.5GB・CPU 2コアと判明（16GB/28スレッドに余裕）。
+- seed数=5なので`MAX_PARALLEL_SEEDS=5`（全seed同時=1波）が意味のある最大値。stop→`RESUME`再起動で5へ引き上げ、
+  Phase 5/6を高速化。これより速くするには「seed内の問題を並列化する（per-problem並列, 工夫B）」が必要だが、
+  Bは乱数スキームが変わり結果が変わるため今回は不採用。
+
+### B.5 _05のスコープ変更：Phase 6は`noise=0.1`のみ（ユーザー指示）
+
+- 時間短縮のため、Phase 6のnoise sweepを既定の`0.0/0.05/0.1/0.2`（4水準）から**`NOISE="0.1"`（単一水準）**へ変更して再実行。
+- **影響**：仮説H3のノイズ頑健性スロープは2水準以上が必要なため、この_05では算出されない
+  （`phase6_noise_sweep.py`の`len(noises)>=2`ガードでskip、クラッシュはしない）。§10の「Phase 6のノイズ主張」は
+  このrunでは提示できない。Phase 4/5は影響を受けない。manifestに`LTSR_NOISE=0.1`が記録され、`PROVENANCE_NOTE.txt`にも明記。
+- これは§6.1の「実験設定（noise水準）の変更＝要人確認」に該当し、ユーザーの明示指示で実施した。
+
+### B.6 現在の状態とPhase 7/8の再開手順（2026-07-25時点）
+
+- _05は**Phase 6（noise=0.1）を実行中**。Phase 6集約が出た時点で**自動停止**する（別tmuxセッション`ltsr-stopper`が
+  `phase6_noise_multiseed/summary.json`を検知して`ltsr-auto`をkill）。停止後、Phase 4/5/6の結果を温存する。
+  **`results/runs/paper_gpu_20260723_05_full/`を削除しないこと**（Phase 7/8のresumeに必要）。
+- **Phase 7/8を後日再開**するには、同じrun dirに対して次を`tmux`内で実行する（Phase 4/5/6はskip、
+  Phase 7→8→検査→archive→publishまで進む）：
+
+```bash
+export LTSR_WEIGHTS="$PWD/NSRS/weights/100M.ckpt"
+export LTSR_CONFIG="$PWD/NSRS/jupyter/100M/config.yaml"
+export LTSR_EQ_SETTING="$PWD/NSRS/jupyter/100M/eq_setting.json"
+tmux new-session -d -s ltsr-auto -c "$PWD" \
+  "CAMPAIGN_ID=paper_gpu_20260723_05 RUN_SMOKE=0 PUBLISH_GIT=1 \
+   MAX_PARALLEL_SEEDS=5 RESUME=1 DREAM4=1 \
+   LTSR_WEIGHTS='$LTSR_WEIGHTS' LTSR_CONFIG='$LTSR_CONFIG' LTSR_EQ_SETTING='$LTSR_EQ_SETTING' \
+   bash scripts/run_gpu_campaign.sh >> results/runs/paper_gpu_20260723_05_campaign.log 2>&1"
+```
+
+  - 前提：run dirが無傷、commitが`75d84db`のまま（ブランチ切替・コード変更をしない）。
+  - Phase 6で`noise=0.1`のみを使ったことはPhase 7/8に影響しない（Phase 7/8は各自の別ノイズ設定）。
+  - 停止直後のmanifest `status`はkillの副作用で`failed`（=未完・中断の意）。resumeすれば`running`→`complete`に戻る。
+
+### B.7 バックアップ（`results/runs/`はGit管理外）
+
+- `results/runs/`はgitignore（生成物・全予測・ログ・入力）。GPU PCだけに置かず、§9の手順で`tar.gz`＋`sha256`を作り、
+  Drive/共有ドライブへ**コピー**（移動ではなく）する。ローカルはPhase 7/8のresume用に残す。
