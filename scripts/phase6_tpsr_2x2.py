@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -41,6 +44,46 @@ EQ_SETTING = Path(os.environ.get("LTSR_EQ_SETTING", str(ROOT / "NSRS" / "jupyter
 OUT_DIR, REPORT = phase_output_paths(ROOT, "phase6", "phase6_report.md")
 
 PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4_multiseed" / "contrib_aggregate.json"
+
+# The TPSR reward path evaluates candidate expressions through SymPy
+# (lambdify / subs / trig-simplify), which can grind for hours on a pathological
+# expression — a CPU-bound pure-Python loop that never raises. Bound each
+# per-problem decode with a wall-clock limit; on timeout the problem is recorded
+# as a failure (the conservative outcome, handled by the existing except below).
+# Normal decodes finish in well under a minute, so only true blow-ups are cut.
+DECODE_TIMEOUT_SEC = float(os.environ.get("LTSR_DECODE_TIMEOUT_SEC", "240"))
+
+
+class _DecodeTimeout(Exception):
+    """Raised when a single-problem decode exceeds DECODE_TIMEOUT_SEC."""
+
+
+@contextmanager
+def _decode_time_limit(seconds: float):
+    """Best-effort per-problem wall-clock limit via SIGALRM (main thread, POSIX).
+
+    Off the main thread or without SIGALRM the decode runs unguarded rather than
+    failing; the phase-6 eval loop runs on the main thread. The TPSR decode path
+    does not install its own SIGALRM handler, so there is no nesting conflict.
+    """
+    if (
+        seconds <= 0
+        or not hasattr(signal, "SIGALRM")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        yield
+        return
+
+    def _handler(signum, frame):
+        raise _DecodeTimeout(f"decode exceeded {seconds:.0f}s")
+
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
 
 
 def log(msg: str) -> None:
@@ -95,7 +138,7 @@ def eval_one(
         candidates: List[str] = []
         failure_reason = None
         try:
-            with warnings.catch_warnings():
+            with warnings.catch_warnings(), _decode_time_limit(DECODE_TIMEOUT_SEC):
                 warnings.simplefilter("ignore")
                 if decode == "beam":
                     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
