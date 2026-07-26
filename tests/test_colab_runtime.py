@@ -37,6 +37,20 @@ def test_registered_colab_configs_fix_noise_to_point_one():
     assert env["MPLBACKEND"] == "Agg"
 
 
+def test_reduced_colab_config_applies_the_approved_compute_budget():
+    reduced = config_for("reduced", "reduced-id", max_parallel_seeds=2)
+    assert reduced.seeds == "0 1 2"
+    assert reduced.n_per_skeleton == 12
+    assert reduced.eval_limit == 30
+    assert reduced.random_layer_seeds == "0 1 2"
+    assert reduced.beam == 2
+    assert reduced.bfgs_restarts == 2
+    assert reduced.bfgs_stop == 0.5
+    assert reduced.noise == "0.1"
+    assert reduced.dream4_networks == "1 2 3 4 5"
+    assert reduced.max_parallel_seeds == 2
+
+
 def test_run_command_replaces_colab_inline_matplotlib_backend(
     monkeypatch, tmp_path
 ):
@@ -128,3 +142,6 @@ def test_gpu_pipeline_selects_the_noise_specific_phase4_suite():
     assert 'NOISE_CANON=$("${PY_CMD[@]}"' in script
     assert 'diverse_gpu_n${NOISE_CANON}' in script
     assert "requires exactly one NOISE value" in script
+    assert "run_phase4_seed()" in script
+    assert "--resume-existing --seed-only" in script
+    assert 'if [ "$MAX_PARALLEL_SEEDS" -gt 1 ]' in script

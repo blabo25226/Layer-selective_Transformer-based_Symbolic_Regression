@@ -41,14 +41,28 @@ def test_tuning_selects_by_validation_only(monkeypatch):
     base = torch.nn.Linear(1, 1, bias=False)
     configs = build_config_grid([1e-3, 1e-4], [2], patience=1)
 
-    def fake_train(model, loader, layers, *, lr, epochs, **kwargs):
-        with torch.no_grad():
-            model.weight.fill_(lr)
+    calls = []
+
+    def fake_train(
+        model, loader, layers, *, lr, epochs, checkpoint_epochs, **kwargs
+    ):
+        calls.append((lr, epochs, tuple(checkpoint_epochs)))
+        candidates = {}
+        for cap in checkpoint_epochs:
+            state = {key: value.clone() for key, value in model.state_dict().items()}
+            state["weight"].fill_(lr)
+            candidates[cap] = {
+                "state_dict": state,
+                "train": {
+                    "best_val_ce": 0.1 if lr == 1e-4 else 0.5,
+                    "trainable": 1.0,
+                    "total": 1.0,
+                    "epochs": float(cap),
+                },
+            }
         return {
             "best_val_ce": 0.1 if lr == 1e-4 else 0.5,
-            "trainable": 1.0,
-            "total": 1.0,
-            "epochs": float(epochs),
+            "_epoch_candidates": candidates,
         }
 
     monkeypatch.setattr("training.tuning.train_selective", fake_train)
@@ -66,6 +80,46 @@ def test_tuning_selects_by_validation_only(monkeypatch):
     assert selection["candidate_count"] == 2
     assert selection["selected"]["lr"] == 1e-4
     assert abs(float(model.weight.detach()) - 1e-4) < 1e-10
+    assert calls == [(1e-3, 2, (2,)), (1e-4, 2, (2,))]
+
+
+def test_tuning_reuses_nested_epoch_candidates(monkeypatch):
+    base = torch.nn.Linear(1, 1, bias=False)
+    configs = build_config_grid([1e-4], [2, 4], patience=1)
+    calls = []
+
+    def fake_train(
+        model, loader, layers, *, lr, epochs, checkpoint_epochs, **kwargs
+    ):
+        calls.append((lr, epochs, tuple(checkpoint_epochs)))
+        candidates = {}
+        for cap in checkpoint_epochs:
+            state = {key: value.clone() for key, value in model.state_dict().items()}
+            state["weight"].fill_(float(cap))
+            candidates[cap] = {
+                "state_dict": state,
+                "train": {
+                    "best_val_ce": 1.0 / cap,
+                    "epochs": float(cap),
+                },
+            }
+        return {"_epoch_candidates": candidates}
+
+    monkeypatch.setattr("training.tuning.train_selective", fake_train)
+    model, selection = tune_selective(
+        base,
+        lambda: object(),
+        object(),
+        None,
+        configs,
+        device=torch.device("cpu"),
+        seed=7,
+    )
+
+    assert calls == [(1e-4, 4, (2, 4))]
+    assert selection["candidate_count"] == 2
+    assert selection["selected"]["epochs"] == 4
+    assert float(model.weight.detach()) == 4.0
 
 
 def test_train_selective_restores_best_validation_epoch():

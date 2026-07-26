@@ -30,7 +30,7 @@ STOP_AFTER_PHASE=${STOP_AFTER_PHASE:-8}
 LTSR_DECODE_TIMEOUT_SEC=${LTSR_DECODE_TIMEOUT_SEC:-240}
 
 # --- Speed / robustness knobs (default values reproduce the original behavior) ---
-# MAX_PARALLEL_SEEDS>1 runs the per-seed loops of phases 5/6/7/8 concurrently.
+# MAX_PARALLEL_SEEDS>1 runs the per-seed loops of phases 4/5/6/7/8 concurrently.
 # Each seed is an unchanged independent process, so its output is byte-identical
 # to running it alone; only wall-clock changes. Keep it small (2-3) on a single
 # GPU to stay within VRAM. Thread counts are intentionally left untouched so
@@ -208,11 +208,28 @@ if _phase_selected 4; then
   else
     phase4_resume_args=()
     if [ "$RESUME" = "1" ]; then phase4_resume_args+=(--resume-existing); fi
-    "${PY_CMD[@]}" scripts/phase4_multiseed.py --data-dir "$DATA" --seeds $SEEDS \
-      --epochs "$EPOCHS" --eval-limit "$EVAL_LIMIT" --beam-size "$BEAM" \
-      --lr-grid $LR_GRID --epoch-grid $EPOCH_GRID --patience "$PATIENCE" \
-      --bfgs-restarts "$BFGS_RESTARTS" --bfgs-stop-time "$BFGS_STOP" \
-      "${phase4_resume_args[@]}"
+    phase4_common_args=(
+      --data-dir "$DATA"
+      --epochs "$EPOCHS" --eval-limit "$EVAL_LIMIT" --beam-size "$BEAM"
+      --lr-grid $LR_GRID --epoch-grid $EPOCH_GRID --patience "$PATIENCE"
+      --bfgs-restarts "$BFGS_RESTARTS" --bfgs-stop-time "$BFGS_STOP"
+    )
+    if [ "$MAX_PARALLEL_SEEDS" -gt 1 ]; then
+      run_phase4_seed() {
+        local seed="$1"
+        "${PY_CMD[@]}" scripts/phase4_multiseed.py \
+          "${phase4_common_args[@]}" --seeds "$seed" \
+          --resume-existing --seed-only
+      }
+      parallel_seeds run_phase4_seed
+      # Rebuild the shared ranking from complete, parseable seed checkpoints.
+      "${PY_CMD[@]}" scripts/phase4_multiseed.py \
+        "${phase4_common_args[@]}" --seeds $SEEDS --resume-existing
+    else
+      "${PY_CMD[@]}" scripts/phase4_multiseed.py \
+        "${phase4_common_args[@]}" --seeds $SEEDS \
+        "${phase4_resume_args[@]}"
+    fi
   fi
 else
   _require_file "$CONTRIB"

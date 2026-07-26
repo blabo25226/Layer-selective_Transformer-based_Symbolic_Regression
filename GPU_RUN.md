@@ -601,7 +601,8 @@ DREAM4_SHARD_NETWORKS=1
 - Phase 5/6/8は既存どおりseed単位でresumeする。
 - Phase 7は`seed / size / network`単位へ分割する。本番はSize10/100のnetwork 1–5をすべて実行する。
 - `STRICT_RESUME=1`では固定commit、clean worktree、科学設定が元manifestと一致しなければ停止する。
-- `MAX_PARALLEL_SEEDS`は結果を変えない有界seed並列であり、接続後の実測VRAM/RAMから1 → 2 → 3と上げる。
+- `MAX_PARALLEL_SEEDS`は結果を変えない有界seed並列である。Phase 4もseedごとの独立workerと
+  完了後のaggregate再構築に対応し、Phase 4–8へ適用できる。
 
 ### 11.3 Colab本実験のPhase 6設定
 
@@ -617,7 +618,35 @@ noise水準間比較を提示しない。Phase 6で評価するのは`noise=0.1`
 交互作用、valid率、failure-penalized NMSE、式複雑度、実行時間である。
 既存の4水準CPU pilotや別GPU runと同じ実験条件として集約しない。
 
-### 11.4 Colab成果物
+### 11.4 承認済み計算量削減run
+
+2026-07-26のユーザー指示により、途中の`colab_paper_20260726_01`を停止し、
+以降は`config_for("reduced", ...)`で次の固定設定を使う。
+
+```text
+SEEDS="0 1 2"
+NPS=12
+EVAL_LIMIT=30
+LR_GRID="1e-5 3e-5 1e-4"
+EPOCH_GRID="4 8"
+RANDOM_LAYER_SEEDS="0 1 2"
+BEAM=2
+BFGS_RESTARTS=2
+BFGS_STOP=0.5
+NOISE="0.1"
+MAX_PARALLEL_SEEDS=2
+```
+
+- Phase 4/5では同一learning rateの4/8 epoch候補を1本の8 epoch軌跡から評価し、
+  4 epoch時点のbest validation checkpointを保存する。候補数、初期値、データ順、validation選択基準は変えない。
+- Phase 4は最大2 seedを並列実行し、seed別audit JSONが揃った後に共有rankingを再構築する。
+- Phase 5–8も3 seedsを使用し、Phase 5/6は同じ`EVAL_LIMIT=30`を使用する。
+- Phase 7はSize10/100のnetwork 1–5と全targetを維持する。Phase 8は元からbeam 1なので増やさない。
+- PySR iterationsとTPSR rollout/horizon/widthは変更しない。
+- これは元の5-seed・全件・beam 5の`paper`設定とは別の縮小プロトコルである。
+  結果、manifest、reportを元設定と同一条件として集約しない。
+
+### 11.5 Colab成果物
 
 ```text
 MyDrive/LTSR_colab/

@@ -171,9 +171,9 @@ RUN_CONFIG = code(
     # Phase 4--8で同じ3値を使用する。別設定は必ず新しいRUN_IDにする。
     from colab_runtime import config_for
 
-    RUN_KIND = "smoke"  # "smoke" -> "pilot" -> "paper"
-    RUN_ID = "colab_smoke_20260726_01"
-    MAX_PARALLEL_SEEDS = 1  # smoke実測後にのみ増やす
+    RUN_KIND = "reduced"  # 承認済みの計算量削減版
+    RUN_ID = "colab_reduced_20260726_01"
+    MAX_PARALLEL_SEEDS = 2
     CONFIG = config_for(
         RUN_KIND, RUN_ID, max_parallel_seeds=MAX_PARALLEL_SEEDS
     )

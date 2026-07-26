@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 import random
 from dataclasses import asdict, dataclass
@@ -70,40 +71,60 @@ def tune_selective(
     if not configs:
         raise ValueError("At least one fine-tuning candidate is required")
 
-    best_model: Optional[torch.nn.Module] = None
+    best_state: Optional[Dict[str, torch.Tensor]] = None
     best_score = float("inf")
     best_info: Optional[Dict[str, float]] = None
     best_config: Optional[FineTuneConfig] = None
     trials: list[Dict[str, object]] = []
 
+    grouped: Dict[tuple[float, int, float], list[FineTuneConfig]] = {}
     for config in configs:
+        grouped.setdefault(
+            (config.lr, config.patience, config.min_delta), []
+        ).append(config)
+
+    trial_by_config: Dict[FineTuneConfig, Dict[str, object]] = {}
+    for (lr, patience, min_delta), group in grouped.items():
+        epoch_caps = sorted({config.epochs for config in group})
         seed_everything(seed)
         model = clone_model(base_model)
         info = train_selective(
             model,
             train_loader_factory(),
             layer_names,
-            epochs=config.epochs,
-            lr=config.lr,
+            epochs=max(epoch_caps),
+            lr=lr,
             device=device,
             val_loader=val_loader,
-            patience=config.patience,
-            min_delta=config.min_delta,
+            patience=patience,
+            min_delta=min_delta,
+            checkpoint_epochs=epoch_caps,
         )
-        score = float(info.get("best_val_ce", float("nan")))
-        trials.append({"config": asdict(config), "val_ce": score, "train": info})
-        if math.isfinite(score) and score < best_score:
-            if best_model is not None:
-                del best_model
-            best_model = model
-            best_score = score
-            best_info = info
-            best_config = config
-        else:
-            del model
+        candidates = info.pop("_epoch_candidates")
+        for config in group:
+            candidate = candidates[config.epochs]
+            candidate_info = candidate["train"]
+            score = float(candidate_info.get("best_val_ce", float("nan")))
+            trial_by_config[config] = {
+                "config": asdict(config),
+                "val_ce": score,
+                "train": candidate_info,
+            }
+            if math.isfinite(score) and score < best_score:
+                best_state = copy.deepcopy(candidate["state_dict"])
+                best_score = score
+                best_info = candidate_info
+                best_config = config
+        del model
+        del candidates
 
-    if best_model is None or best_info is None or best_config is None:
+    trials = [trial_by_config[config] for config in configs]
+
+    if best_state is None or best_info is None or best_config is None:
         raise RuntimeError("Every fine-tuning candidate produced a non-finite validation CE")
+    best_model = clone_model(base_model)
+    best_model.load_state_dict(best_state)
+    best_model.to(device)
 
     selection: Dict[str, object] = {
         "criterion": "validation_ce",

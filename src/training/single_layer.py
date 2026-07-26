@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import torch
 from torch.utils.data import DataLoader
@@ -30,7 +30,8 @@ def train_selective(
     val_loader: Optional[DataLoader] = None,
     patience: int = 0,
     min_delta: float = 1e-4,
-) -> Dict[str, float]:
+    checkpoint_epochs: Optional[Sequence[int]] = None,
+) -> Dict[str, Any]:
     """
     Fine-tune `model` with only `layer_names` trainable.
     If layer_names is None, train all parameters.
@@ -68,6 +69,39 @@ def train_selective(
     best_epoch = 0
     bad = 0
     stopped_epoch = 0
+    requested_checkpoints = sorted(
+        {int(epoch) for epoch in (checkpoint_epochs or [])}
+    )
+    if any(epoch <= 0 or epoch > epochs for epoch in requested_checkpoints):
+        raise ValueError(
+            f"checkpoint_epochs must be within 1..{epochs}: "
+            f"{requested_checkpoints}"
+        )
+    epoch_candidates: Dict[int, Dict[str, Any]] = {}
+
+    def _candidate_record() -> Dict[str, Any]:
+        state = (
+            {key: value.clone() for key, value in best_state.items()}
+            if best_state is not None
+            else None
+        )
+        return {
+            "state_dict": state,
+            "train": {
+                "final_loss": last_loss,
+                "trainable": float(trainable),
+                "total": float(total),
+                "epochs": float(stopped_epoch),
+                "trainable_fraction": (
+                    float(trainable / total) if total else 0.0
+                ),
+                "best_val_ce": (
+                    float(best_val) if best_state is not None else float("nan")
+                ),
+                "best_epoch": float(best_epoch),
+                "stopped_epoch": float(stopped_epoch),
+            },
+        }
 
     def _ce(loader: DataLoader) -> float:
         model.eval()
@@ -102,13 +136,21 @@ def train_selective(
                 bad = 0
             else:
                 bad += 1
-                if patience > 0 and bad >= patience:
-                    break
+        if stopped_epoch in requested_checkpoints:
+            epoch_candidates[stopped_epoch] = _candidate_record()
+        if val_loader is not None and patience > 0 and bad >= patience:
+            break
+
+    # If early stopping occurs before a requested cap, an independent run with
+    # that larger cap stops at the same epoch and selects the same best state.
+    for epoch in requested_checkpoints:
+        if epoch not in epoch_candidates:
+            epoch_candidates[epoch] = _candidate_record()
 
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    return {
+    result: Dict[str, Any] = {
         "final_loss": last_loss,
         "trainable": float(trainable),
         "total": float(total),
@@ -118,3 +160,6 @@ def train_selective(
         "best_epoch": float(best_epoch),
         "stopped_epoch": float(stopped_epoch),
     }
+    if requested_checkpoints:
+        result["_epoch_candidates"] = epoch_candidates
+    return result
