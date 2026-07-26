@@ -573,9 +573,9 @@ Colab用Notebookは`notebooks/colab/`にあり、`00_setup_preflight.ipynb`か�
 ### 11.1 Colab固有の前提
 
 - **研究コードのPython 3.10を必須とする。** 現行Colab標準kernelが3.11/3.12でも、
-  Phase 0 Notebookの最初のセルで`/usr/local/bin/python`へPython 3.10 Miniconda baseを導入する。
-  Colab UI kernelが3.12へ戻る場合があるため、preflight、依存関係導入、全Phase、最終検査は
-  `PY=/usr/local/bin/python`を明示して実行し、workerが3.10でなければ停止する。
+  Phase 0 Notebookの最初のセルで`/content/ltsr-py310/bin/python`へ公式Python 3.10 Minicondaを導入する。
+  Colab UI kernelとは独立させ、preflight、依存関係導入、全Phase、最終検査は
+  `PY=/content/ltsr-py310/bin/python`を明示して実行し、workerが3.10でなければ停止する。
 - NotebookをDriveで開いても、このrepositoryの`src/`、`scripts/`、`NSRS/`、`TPSR/`は自動的に見えない。
   Notebookがbranchを`/content/LTSR`へcloneし、Driveの`source_lock.json`に固定したcommitへcheckoutする。
 - Googleログイン、MFA、Drive mount、GPU runtime接続は人が行う。その後のセル実行とエラー対応はAIへ委任できる。

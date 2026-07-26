@@ -28,7 +28,7 @@
 
 ## 重要事項
 
-- Colab UI kernelの版にかかわらず、`/usr/local/bin/python`のworkerがPython 3.10でなければ後続Phaseを実行しない。
+- Colab UI kernelの版にかかわらず、`/content/ltsr-py310/bin/python`のworkerがPython 3.10でなければ後続Phaseを実行しない。
 - NotebookをDriveで開いてもrepoファイルは自動的に見えない。
   各Notebookが固定commitを`/content/LTSR`へcloneする。
 - Phase 4–8では同じ`RUN_KIND`と`RUN_ID`を使う。

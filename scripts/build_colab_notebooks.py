@@ -31,11 +31,22 @@ def code(source: str) -> dict:
 PYTHON_310 = code(
     """
     # 必ず最初に実行する。Colab UI kernelとは別に研究コード用Python 3.10を用意する。
+    import hashlib
     import subprocess
     import sys
+    import urllib.request
     from pathlib import Path
 
-    PY310 = Path("/usr/local/bin/python")
+    PY310_ROOT = Path("/content/ltsr-py310")
+    PY310 = PY310_ROOT / "bin" / "python"
+    INSTALLER = Path("/content/Miniconda3-py310_23.11.0-2-Linux-x86_64.sh")
+    INSTALLER_URL = (
+        "https://repo.anaconda.com/miniconda/"
+        "Miniconda3-py310_23.11.0-2-Linux-x86_64.sh"
+    )
+    INSTALLER_SHA256 = (
+        "35a58b8961e1187e7311b979968662c6223e86e1451191bed2e67a72b6bd0658"
+    )
 
     def worker_version():
         if not PY310.is_file():
@@ -52,14 +63,23 @@ PYTHON_310 = code(
     print("Colab controller:", sys.version)
     print("LTSR worker before setup:", version)
     if version is None or not version.startswith("3.10."):
-        subprocess.check_call([
-            sys.executable, "-m", "pip", "install", "-q", "condacolab==0.1.10"
-        ])
-        import condacolab
-        condacolab.install_miniconda()
-        raise SystemExit(
-            "Python 3.10 workerを導入しました。runtime再起動後、このセルを再実行してください。"
+        if not INSTALLER.is_file():
+            urllib.request.urlretrieve(INSTALLER_URL, INSTALLER)
+        digest = hashlib.sha256(INSTALLER.read_bytes()).hexdigest()
+        if digest != INSTALLER_SHA256:
+            raise RuntimeError(
+                f"Miniconda installer checksum mismatch: {digest}"
+            )
+        subprocess.run(
+            [
+                "bash", str(INSTALLER), "-b", "-u",
+                "-p", str(PY310_ROOT),
+            ],
+            check=True,
         )
+        version = worker_version()
+    if version is None or not version.startswith("3.10."):
+        raise RuntimeError(f"Python 3.10 worker setup failed: {version}")
     print("LTSR worker Python 3.10: OK —", version)
     """
 )
