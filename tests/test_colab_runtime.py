@@ -119,3 +119,12 @@ def test_generated_notebooks_have_no_saved_execution_state():
             )
             assert "dependency_probe" in source
             assert "requirements/gpu.txt" in source
+
+
+def test_gpu_pipeline_selects_the_noise_specific_phase4_suite():
+    script = (ROOT / "scripts" / "run_gpu_pipeline.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'NOISE_CANON=$("${PY_CMD[@]}"' in script
+    assert 'diverse_gpu_n${NOISE_CANON}' in script
+    assert "requires exactly one NOISE value" in script
