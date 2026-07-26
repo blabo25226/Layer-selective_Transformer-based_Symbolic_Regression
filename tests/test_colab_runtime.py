@@ -101,3 +101,9 @@ def test_generated_notebooks_have_no_saved_execution_state():
         assert "/content/ltsr-py310" in "".join(code_cells[0]["source"])
         assert all(cell["execution_count"] is None for cell in code_cells)
         assert all(cell["outputs"] == [] for cell in code_cells)
+        if path.name != "00_setup_preflight.ipynb":
+            source = "".join(
+                "".join(cell["source"]) for cell in code_cells
+            )
+            assert "dependency_probe" in source
+            assert "requirements/gpu.txt" in source

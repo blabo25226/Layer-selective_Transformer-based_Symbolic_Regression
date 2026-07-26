@@ -135,6 +135,37 @@ BOOTSTRAP = code(
     """
 )
 
+ENSURE_DEPENDENCIES = code(
+    """
+    # /content is ephemeral, so every fresh Colab VM must restore worker packages.
+    import subprocess
+
+    dependency_probe = subprocess.run(
+        [
+            str(PY310), "-c",
+            "import numpy, torch, pytorch_lightning, nesymres, pytest, pysr",
+        ],
+        cwd=REPO_ROOT,
+    )
+    if dependency_probe.returncode != 0:
+        commands = [
+            [str(PY310), "-m", "pip", "install", "--upgrade", "pip"],
+            [
+                str(PY310), "-m", "pip", "install", "torch==2.5.1",
+                "--index-url", "https://download.pytorch.org/whl/cu124",
+            ],
+            [str(PY310), "-m", "pip", "install", "-r", "requirements/gpu.txt"],
+            [str(PY310), "-m", "pip", "install", "-e", "NSRS/src"],
+            [str(PY310), "-m", "pip", "install", "pytest", "pysr"],
+        ]
+        for command in commands:
+            print("+", " ".join(command), flush=True)
+            subprocess.run(command, cwd=REPO_ROOT, check=True)
+    else:
+        print("Python 3.10 worker dependencies: already installed")
+    """
+)
+
 RUN_CONFIG = code(
     """
     # Phase 4--8で同じ3値を使用する。別設定は必ず新しいRUN_IDにする。
@@ -165,6 +196,7 @@ def common_intro(title: str, purpose: str) -> list[dict]:
         ),
         PYTHON_310,
         BOOTSTRAP,
+        ENSURE_DEPENDENCIES,
     ]
 
 
@@ -173,6 +205,7 @@ def setup_notebook() -> dict:
         "LTSR Colab Phase 0 — setup / preflight",
         "Python 3.10、CUDA、依存関係、checkpoint、DREAM4、GSE112372を準備する。",
     )
+    cells.pop()  # Phase 0 has the explicit dependency-install section below.
     cells += [
         markdown(
             """
