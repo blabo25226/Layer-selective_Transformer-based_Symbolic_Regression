@@ -257,7 +257,14 @@ def main() -> int:
         action="store_true",
         help="Reuse only complete, parseable seed checkpoints in the output directory",
     )
+    parser.add_argument(
+        "--seed-only",
+        action="store_true",
+        help="Run and checkpoint exactly one seed, then skip shared aggregation",
+    )
     args = parser.parse_args()
+    if args.seed_only and len(args.seeds) != 1:
+        parser.error("--seed-only requires exactly one value in --seeds")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_dir = Path(args.data_dir)
@@ -322,6 +329,10 @@ def main() -> int:
                 json.dumps(_sanitize(run[key]), indent=2), encoding="utf-8"
             )
         log(f"  seed {seed} done ({time.time() - t0:.1f}s)")
+
+    if args.seed_only:
+        log("Seed checkpoint complete; shared aggregation intentionally skipped.")
+        return 0
 
     agg = aggregate(per_seed)
     absolute_agg = aggregate(absolute_per_seed)

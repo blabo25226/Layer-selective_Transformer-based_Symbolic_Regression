@@ -146,7 +146,7 @@ class ColabRunConfig:
 
 
 def config_for(kind: str, run_id: str, *, max_parallel_seeds: int = 1) -> ColabRunConfig:
-    """Build the pre-registered smoke, pilot, or paper configuration."""
+    """Build a pre-registered Colab run configuration."""
     common = {
         "run_id": run_id,
         "kind": kind,
@@ -209,6 +209,26 @@ def config_for(kind: str, run_id: str, *, max_parallel_seeds: int = 1) -> ColabR
             beam=5,
             bfgs_restarts=5,
             bfgs_stop=2.0,
+            pysr=True,
+            dream4=True,
+            dream4_networks="1 2 3 4 5",
+            dream4_size10_target_limit=0,
+            dream4_size100_sr_targets=0,
+        )
+    if kind == "reduced":
+        return ColabRunConfig(
+            **common,
+            seeds="0 1 2",
+            n_per_skeleton=12,
+            epochs=8,
+            eval_limit=30,
+            lr_grid="1e-5 3e-5 1e-4",
+            epoch_grid="4 8",
+            patience=2,
+            random_layer_seeds="0 1 2",
+            beam=2,
+            bfgs_restarts=2,
+            bfgs_stop=0.5,
             pysr=True,
             dream4=True,
             dream4_networks="1 2 3 4 5",
