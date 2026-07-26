@@ -15,6 +15,7 @@ from colab_runtime import (  # noqa: E402
     config_for,
     copy_tree,
     lock_run_config,
+    restore_artifacts,
     run_command,
 )
 
@@ -86,6 +87,17 @@ def test_copy_tree_ignores_incomplete_drive_files(tmp_path):
     assert copy_tree(source, destination) == 1
     assert (destination / "result.json").read_text(encoding="utf-8") == '{"ok": true}'
     assert not (destination / "result.json.partial").exists()
+
+
+def test_restore_artifacts_does_not_copy_drive_control_file(tmp_path):
+    drive = tmp_path / "drive"
+    repo = tmp_path / "repo"
+    run = drive / "runs" / "smoke"
+    run.mkdir(parents=True)
+    (run / "colab_control.json").write_text("{}", encoding="utf-8")
+
+    assert restore_artifacts(repo, drive, "smoke") == 0
+    assert not (repo / "results" / "runs" / "smoke").exists()
 
 
 def test_generated_notebooks_have_no_saved_execution_state():
