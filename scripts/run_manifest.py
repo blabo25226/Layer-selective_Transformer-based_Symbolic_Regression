@@ -80,6 +80,11 @@ def main() -> int:
     parser.add_argument("--weights", type=Path)
     parser.add_argument("--command", default="")
     parser.add_argument("--data-path", type=Path, action="append", default=[])
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="For resume, require the original commit and scientific LTSR parameters",
+    )
     args = parser.parse_args()
     if args.action == "stage" and not args.stage:
         parser.error("--stage is required for the stage action")
@@ -126,11 +131,58 @@ def main() -> int:
             print(f"no manifest to resume: {path}", file=sys.stderr)
             return 0
         data = json.loads(path.read_text(encoding="utf-8"))
+        current_commit = git("rev-parse", "HEAD")
+        current_branch = git("branch", "--show-current")
+        current_dirty = bool(git("status", "--porcelain"))
+        if args.strict:
+            original_commit = data.get("git", {}).get("commit")
+            if original_commit != current_commit:
+                print(
+                    "strict resume refused: commit mismatch "
+                    f"(manifest={original_commit}, current={current_commit})",
+                    file=sys.stderr,
+                )
+                return 2
+            if current_dirty:
+                print("strict resume refused: current worktree is dirty", file=sys.stderr)
+                return 2
+            controls = {
+                "LTSR_START_PHASE",
+                "LTSR_STOP_AFTER_PHASE",
+                "LTSR_RESUME",
+                "LTSR_MAX_PARALLEL_SEEDS",
+                "LTSR_STRICT_RESUME",
+            }
+            original_parameters = data.get("parameters", {})
+            mismatches = []
+            for key, original_value in original_parameters.items():
+                if key in controls or key not in os.environ:
+                    continue
+                current_value = os.environ[key]
+                if current_value != original_value:
+                    mismatches.append(
+                        f"{key}: manifest={original_value!r}, current={current_value!r}"
+                    )
+            if mismatches:
+                print("strict resume refused: parameter mismatch", file=sys.stderr)
+                for mismatch in mismatches:
+                    print(f"  - {mismatch}", file=sys.stderr)
+                return 2
         data.setdefault("resumes", []).append({
             "at_utc": datetime.now(timezone.utc).isoformat(),
-            "commit": git("rev-parse", "HEAD"),
-            "branch": git("branch", "--show-current"),
-            "git_dirty": bool(git("status", "--porcelain")),
+            "commit": current_commit,
+            "branch": current_branch,
+            "git_dirty": current_dirty,
+            "strict": args.strict,
+            "runtime_controls": {
+                key: os.environ.get(key)
+                for key in (
+                    "LTSR_START_PHASE",
+                    "LTSR_STOP_AFTER_PHASE",
+                    "LTSR_RESUME",
+                    "LTSR_MAX_PARALLEL_SEEDS",
+                )
+            },
         })
         data["status"] = "running"
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

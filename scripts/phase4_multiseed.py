@@ -51,7 +51,7 @@ from models.nesymres_adapter import load_nesymres  # noqa: E402
 from training.single_layer import clone_model  # noqa: E402
 from training.selective_layers import ranking_from_contributions, usable_ranking_metrics  # noqa: E402
 from training.tuning import build_config_grid, seed_everything, tune_selective  # noqa: E402
-from experiment_runtime import phase_output_paths  # noqa: E402
+from experiment_runtime import load_phase4_seed_checkpoint, phase_output_paths  # noqa: E402
 
 # Reuse the single-seed Phase 4 building blocks.
 from phase4_layer_contribution import (  # noqa: E402
@@ -252,6 +252,11 @@ def main() -> int:
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
     parser.add_argument("--bfgs-stop-time", type=float, default=0.5)
+    parser.add_argument(
+        "--resume-existing",
+        action="store_true",
+        help="Reuse only complete, parseable seed checkpoints in the output directory",
+    )
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -279,6 +284,18 @@ def main() -> int:
     for seed in args.seeds:
         t0 = time.time()
         log(f"\n=== seed {seed} ===")
+        restored = (
+            load_phase4_seed_checkpoint(OUT_DIR, seed)
+            if args.resume_existing
+            else None
+        )
+        if restored is not None:
+            contrib, absolute, status = restored
+            per_seed.append(contrib)
+            absolute_per_seed.append(absolute)
+            status_per_seed.append(status)
+            log(f"  seed {seed} restored from complete checkpoint")
+            continue
         run = run_one_seed(
             base_model, fit_eval, word2id, train_problems, validation_problems, args, seed, device
         )
