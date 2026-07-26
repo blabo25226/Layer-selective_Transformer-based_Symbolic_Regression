@@ -27,6 +27,7 @@ def test_registered_colab_configs_fix_noise_to_point_one():
     assert env["START_PHASE"] == env["STOP_AFTER_PHASE"] == "6"
     assert env["STRICT_RESUME"] == "1"
     assert env["RESUME"] == "1"
+    assert env["PY"] == "/usr/local/bin/python"
 
 
 def test_colab_run_control_refuses_setting_changes_under_same_id(tmp_path):
@@ -66,5 +67,6 @@ def test_generated_notebooks_have_no_saved_execution_state():
         code_cells = [cell for cell in payload["cells"] if cell["cell_type"] == "code"]
         assert code_cells
         assert "Python 3.10" in "".join(code_cells[0]["source"])
+        assert "/usr/local/bin/python" in "".join(code_cells[0]["source"])
         assert all(cell["execution_count"] is None for cell in code_cells)
         assert all(cell["outputs"] == [] for cell in code_cells)

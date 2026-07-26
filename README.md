@@ -336,8 +336,8 @@ CPU実験はWindows上のPython 3.10環境で実施した。高beam幅、十分�
 
 2件のskipは、現在のPython 3.12環境ではNeSymReS/Hydra 1.0の互換テストを実行しないことと、
 gitignore対象のDREAM4 archiveが未配置の環境では実データ統合テストを実行しないことによる。
-GPU本実験ではPython 3.10を使用する。Colabでも標準runtimeの3.11/3.12をそのまま使わず、
-Phase 0 NotebookでPython 3.10環境へ切り替えてからpreflightを行う。
+GPU本実験ではPython 3.10を使用する。ColabではUIを動かす標準kernelと研究コードの実行環境を分け、
+Phase 0 Notebookが用意する明示的なPython 3.10 workerでpreflightと全Phaseを実行する。
 
 ローカルの `10M.ckpt` はファイル名と異なり、state dict上はencoder/decoder各5層の100M設定側アーキテクチャである。
 そのため `NSRS/jupyter/100M/config.yaml` と組み合わせている。

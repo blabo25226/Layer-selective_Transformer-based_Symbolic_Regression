@@ -30,22 +30,37 @@ def code(source: str) -> dict:
 
 PYTHON_310 = code(
     """
-    # 必ず最初に実行する。Python 3.10でなければMiniconda導入後にruntimeが再起動する。
+    # 必ず最初に実行する。Colab UI kernelとは別に研究コード用Python 3.10を用意する。
     import subprocess
     import sys
+    from pathlib import Path
 
-    print("active Python:", sys.version)
-    if sys.version_info[:2] != (3, 10):
+    PY310 = Path("/usr/local/bin/python")
+
+    def worker_version():
+        if not PY310.is_file():
+            return None
+        return subprocess.check_output(
+            [
+                str(PY310), "-c",
+                "import sys; print('.'.join(map(str, sys.version_info[:3])))",
+            ],
+            text=True,
+        ).strip()
+
+    version = worker_version()
+    print("Colab controller:", sys.version)
+    print("LTSR worker before setup:", version)
+    if version is None or not version.startswith("3.10."):
         subprocess.check_call([
-            sys.executable, "-m", "pip", "install", "-q", "condacolab==0.1.9"
+            sys.executable, "-m", "pip", "install", "-q", "condacolab==0.1.10"
         ])
         import condacolab
         condacolab.install_miniconda()
         raise SystemExit(
-            "Python 3.10 Minicondaを導入しました。runtime再起動後、このNotebookへ再接続し、"
-            "このセルをもう一度実行してください。"
+            "Python 3.10 workerを導入しました。runtime再起動後、このセルを再実行してください。"
         )
-    print("Python 3.10: OK")
+    print("LTSR worker Python 3.10: OK —", version)
     """
 )
 
@@ -94,7 +109,7 @@ BOOTSTRAP = code(
     sys.path.insert(0, str(REPO_ROOT / "src"))
     from colab_runtime import assert_locked_source, require_python_310
 
-    require_python_310()
+    require_python_310(PY310)
     print("locked commit:", assert_locked_source(REPO_ROOT, DRIVE_ROOT))
     print("Drive root:", DRIVE_ROOT)
     """
@@ -153,14 +168,14 @@ def setup_notebook() -> dict:
             import sys
 
             commands = [
-                [sys.executable, "-m", "pip", "install", "--upgrade", "pip"],
+                [str(PY310), "-m", "pip", "install", "--upgrade", "pip"],
                 [
-                    sys.executable, "-m", "pip", "install", "torch==2.5.1",
+                    str(PY310), "-m", "pip", "install", "torch==2.5.1",
                     "--index-url", "https://download.pytorch.org/whl/cu124",
                 ],
-                [sys.executable, "-m", "pip", "install", "-r", "requirements/gpu.txt"],
-                [sys.executable, "-m", "pip", "install", "-e", "NSRS/src"],
-                [sys.executable, "-m", "pip", "install", "pytest", "pysr"],
+                [str(PY310), "-m", "pip", "install", "-r", "requirements/gpu.txt"],
+                [str(PY310), "-m", "pip", "install", "-e", "NSRS/src"],
+                [str(PY310), "-m", "pip", "install", "pytest", "pysr"],
             ]
             for command in commands:
                 print("+", " ".join(command), flush=True)
@@ -208,7 +223,7 @@ def setup_notebook() -> dict:
             env["PYTHONPATH"] = str(REPO_ROOT / "src")
             subprocess.run(
                 [
-                    sys.executable, "-c",
+                    str(PY310), "-c",
                     "from pathlib import Path; "
                     "from data.human import prepare_gse112372; "
                     "p=prepare_gse112372(Path('data/human/gse112372_lps')); "
@@ -237,7 +252,7 @@ def setup_notebook() -> dict:
             run_command(
                 REPO_ROOT,
                 [
-                    sys.executable, "scripts/preflight_gpu.py",
+                    str(PY310), "scripts/preflight_gpu.py",
                     "--weights", "NSRS/weights/100M.ckpt",
                     "--config", "NSRS/jupyter/100M/config.yaml",
                     "--eq-setting", "NSRS/jupyter/100M/eq_setting.json",
@@ -245,10 +260,10 @@ def setup_notebook() -> dict:
             )
             run_command(
                 REPO_ROOT,
-                [sys.executable, "-m", "compileall", "-q", "src", "scripts", "tests"],
+                [str(PY310), "-m", "compileall", "-q", "src", "scripts", "tests"],
             )
             run_command(REPO_ROOT, ["bash", "-n", "scripts/run_gpu_pipeline.sh"])
-            run_command(REPO_ROOT, [sys.executable, "-m", "pytest", "-q"])
+            run_command(REPO_ROOT, [str(PY310), "-m", "pytest", "-q"])
             """
         ),
     ]
@@ -278,7 +293,7 @@ def diagnostic_notebook(phase: int, title: str, command: list[str]) -> dict:
             }}
             command = {command!r}
             if command[0] == "python":
-                command[0] = sys.executable
+                command[0] = str(PY310)
             run_command(REPO_ROOT, command, extra_env=env)
             print(sync_artifacts(REPO_ROOT, DRIVE_ROOT, DIAGNOSTIC_RUN_ID))
             """
@@ -304,7 +319,10 @@ def phase_notebook(phase: int, title: str, purpose: str) -> dict:
             f"""
             from colab_runtime import run_phase
 
-            output = run_phase(REPO_ROOT, DRIVE_ROOT, CONFIG, {phase})
+            output = run_phase(
+                REPO_ROOT, DRIVE_ROOT, CONFIG, {phase},
+                python_executable=PY310,
+            )
             print("Phase {phase} output:", output)
             """
         ),
@@ -343,7 +361,7 @@ def validate_notebook() -> dict:
             restore_artifacts(REPO_ROOT, DRIVE_ROOT, RUN_ID)
             run_dir = REPO_ROOT / "results" / "runs" / RUN_ID
             subprocess.run(
-                [sys.executable, "scripts/validate_gpu_run.py", "--run-dir", str(run_dir)],
+                [str(PY310), "scripts/validate_gpu_run.py", "--run-dir", str(run_dir)],
                 cwd=REPO_ROOT,
                 check=True,
             )
@@ -376,7 +394,12 @@ def notebook(cells: list[dict]) -> dict:
         "cells": cells,
         "metadata": {
             "accelerator": "GPU",
-            "colab": {"name": "", "provenance": []},
+            "colab": {
+                "name": "",
+                "provenance": [],
+                "machine_shape": "hm",
+                "gpuType": "L4",
+            },
             "kernelspec": {
                 "display_name": "Python 3",
                 "language": "python",

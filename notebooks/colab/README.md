@@ -21,14 +21,14 @@
 - Codexアプリ内ブラウザでNotebookを開く。
 - Googleログイン、MFA、Drive mountの承認を行う。
 - GPU runtimeへ接続する。
-- Python 3.10導入でruntimeが再起動した場合、再接続して先頭セルから実行し直す。
+- Python 3.10 worker導入でruntimeが再起動した場合、再接続して先頭セルから実行し直す。
 - `RUN_KIND`、`RUN_ID`、`MAX_PARALLEL_SEEDS`の確認を行う。
 
 それ以外の通常セル実行、ログ確認、エラー修正、再実行はAIへ委任できる。
 
 ## 重要事項
 
-- Python 3.10以外では後続Phaseを実行しない。
+- Colab UI kernelの版にかかわらず、`/usr/local/bin/python`のworkerがPython 3.10でなければ後続Phaseを実行しない。
 - NotebookをDriveで開いてもrepoファイルは自動的に見えない。
   各Notebookが固定commitを`/content/LTSR`へcloneする。
 - Phase 4–8では同じ`RUN_KIND`と`RUN_ID`を使う。
