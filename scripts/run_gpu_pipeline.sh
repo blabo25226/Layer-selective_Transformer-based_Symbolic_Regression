@@ -76,7 +76,18 @@ RUN_ID=${RUN_ID:-"$(date -u +%Y%m%dT%H%M%SZ)_$(git rev-parse --short HEAD)"}
 export LTSR_RUN_DIR=${LTSR_RUN_DIR:-"$PWD/results/runs/$RUN_ID"}
 export LTSR_GRAPH_DIR=${LTSR_GRAPH_DIR:-"$PWD/graphs/$RUN_ID"}
 export LTSR_DREAMLIKE_DATA=${LTSR_DREAMLIKE_DATA:-"$LTSR_RUN_DIR/input_data/phase7_dreamlike_v1"}
-DATA="$LTSR_RUN_DIR/input_data/diverse_gpu"
+case "$NOISE" in
+  *[[:space:]]*)
+    echo "ERROR: this pipeline requires exactly one NOISE value" >&2
+    exit 2
+    ;;
+esac
+NOISE_CANON=$("${PY_CMD[@]}" -c 'import sys; print(float(sys.argv[1]))' "$NOISE")
+if [ "$NOISE_CANON" = "0.0" ]; then
+  DATA="$LTSR_RUN_DIR/input_data/diverse_gpu"
+else
+  DATA="$LTSR_RUN_DIR/input_data/diverse_gpu_n${NOISE_CANON}"
+fi
 CONTRIB="$LTSR_RUN_DIR/phase4_multiseed/layer_ranking_scores.json"
 
 # --- Concurrency helper: run <fn> for each seed with bounded parallelism -------
