@@ -95,7 +95,7 @@ class ColabRunConfig:
         repo_root: Path,
         phase: int,
         resume: bool,
-        python_executable: str | Path = "/usr/local/bin/python",
+        python_executable: str | Path = "/content/ltsr-py310/bin/python",
     ) -> dict[str, str]:
         if phase not in range(4, 9):
             raise ValueError(f"pipeline phase must be 4..8, got {phase}")
@@ -373,7 +373,7 @@ def run_phase(
     phase: int,
     *,
     sync_interval_sec: int = 180,
-    python_executable: str | Path = "/usr/local/bin/python",
+    python_executable: str | Path = "/content/ltsr-py310/bin/python",
 ) -> Path:
     """Execute one pipeline phase and checkpoint it to Drive periodically."""
     repo_root = repo_root.resolve()
