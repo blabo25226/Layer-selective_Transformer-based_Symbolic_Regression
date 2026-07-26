@@ -256,13 +256,22 @@ def _atomic_copy(source: Path, destination: Path) -> None:
     os.replace(partial, destination)
 
 
-def copy_tree(source: Path, destination: Path) -> int:
+def copy_tree(
+    source: Path,
+    destination: Path,
+    *,
+    exclude_names: frozenset[str] = frozenset(),
+) -> int:
     """Copy a tree file-by-file with atomic destination replacement."""
     if not source.is_dir():
         return 0
     copied = 0
     for path in source.rglob("*"):
-        if not path.is_file() or path.name.endswith(".partial"):
+        if (
+            not path.is_file()
+            or path.name.endswith(".partial")
+            or path.name in exclude_names
+        ):
             continue
         relative = path.relative_to(source)
         _atomic_copy(path, destination / relative)
@@ -289,6 +298,7 @@ def restore_artifacts(repo_root: Path, drive_root: Path, run_id: str) -> int:
     return copy_tree(
         drive_root / "runs" / run_id,
         repo_root / "results" / "runs" / run_id,
+        exclude_names=frozenset({"colab_control.json"}),
     )
 
 
