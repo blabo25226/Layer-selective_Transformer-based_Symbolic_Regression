@@ -28,20 +28,72 @@ def safe(obj):
     return obj
 
 
+def load_seed_result(
+    run_dir: Path, size: int, seed: int, networks: list[int] | None = None
+) -> dict:
+    """Load a legacy combined result or merge the requested Colab network shards."""
+    networks = networks or list(range(1, 6))
+    filename = f"size{size}_results.json"
+    legacy = run_dir / f"phase7_dream4_size{size}_seed{seed}" / filename
+    if legacy.is_file():
+        return json.loads(legacy.read_text(encoding="utf-8"))
+
+    shards = []
+    for net_id in networks:
+        path = (
+            run_dir
+            / f"phase7_dream4_size{size}_seed{seed}_net{net_id}"
+            / filename
+        )
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"missing Phase 7 legacy result and network shard: {legacy} / {path}"
+            )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("net_ids") != [net_id]:
+            raise ValueError(f"unexpected net_ids in {path}: {payload.get('net_ids')}")
+        if f"net{net_id}" not in payload.get("selection", {}):
+            raise ValueError(f"missing selection net{net_id} in {path}")
+        if f"net{net_id}" not in payload.get("sr", {}):
+            raise ValueError(f"missing sr net{net_id} in {path}")
+        shards.append((path, payload))
+
+    first = shards[0][1]
+    merged = {
+        key: value
+        for key, value in first.items()
+        if key not in {"net_ids", "selection", "sr", "config"}
+    }
+    merged["net_ids"] = networks
+    merged["selection"] = {}
+    merged["sr"] = {}
+    merged["config"] = {
+        **first.get("config", {}),
+        "all_nets": True,
+        "sharded_networks": True,
+        "shard_files": [str(path) for path, _ in shards],
+    }
+    for _, payload in shards:
+        merged["selection"].update(payload["selection"])
+        merged["sr"].update(payload["sr"])
+    return merged
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--seeds", nargs="+", type=int, required=True)
+    parser.add_argument("--networks", nargs="+", type=int, default=list(range(1, 6)))
     args = parser.parse_args()
     output = {"seeds": args.seeds, "sizes": {}}
     lines = ["# Phase 7 DREAM4 multi-seed summary", "", f"- Seeds: {args.seeds}", ""]
     for size in (10, 100):
         runs = []
         for seed in args.seeds:
-            path = args.run_dir / f"phase7_dream4_size{size}_seed{seed}" / f"size{size}_results.json"
-            if not path.is_file():
-                parser.error(f"missing Phase 7 result: {path}")
-            runs.append(json.loads(path.read_text(encoding="utf-8")))
+            try:
+                runs.append(load_seed_result(args.run_dir, size, seed, args.networks))
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                parser.error(str(exc))
         conditions = sorted(set.intersection(*(
             {condition for net in run["sr"].values() for condition in net}
             for run in runs
@@ -73,7 +125,7 @@ def main() -> int:
         output["sizes"][str(size)] = {"sr": summary, "selection_edge_f1": selection}
         lines += [
             f"## Size {size}", "",
-            "SR values first average over the five fixed networks within each seed; the t-CI is then across seeds.",
+            "SR values first average over the fixed networks within each seed; the t-CI is then across seeds.",
             "",
             "| condition | penalized NMSE | 95% t-CI | valid | complexity | singularity rate | extrapolation valid |",
             "|---|---:|---:|---:|---:|---:|---:|",

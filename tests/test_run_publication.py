@@ -13,6 +13,8 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.export_run_summary import main as export_main  # noqa: E402
 from scripts.validate_gpu_run import main as validate_main  # noqa: E402
+from scripts.run_manifest import main as manifest_main  # noqa: E402
+import scripts.run_manifest as run_manifest_module  # noqa: E402
 
 
 def test_validate_and_export_completed_run(tmp_path, monkeypatch):
@@ -122,3 +124,43 @@ def test_validator_rejects_incomplete_equation_record(tmp_path, monkeypatch):
     ])
     with pytest.raises(SystemExit):
         export_main()
+
+
+def test_strict_manifest_resume_rejects_commit_or_parameter_change(tmp_path, monkeypatch):
+    run = tmp_path / "run"
+    run.mkdir()
+    manifest = {
+        "status": "complete",
+        "git": {"commit": "fixed-commit", "branch": "colab"},
+        "parameters": {
+            "LTSR_SEEDS": "0 1",
+            "LTSR_START_PHASE": "4",
+            "LTSR_STOP_AFTER_PHASE": "4",
+        },
+    }
+    (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    def fake_git(*args):
+        if args == ("rev-parse", "HEAD"):
+            return "fixed-commit"
+        if args == ("branch", "--show-current"):
+            return "colab"
+        if args == ("status", "--porcelain"):
+            return ""
+        raise AssertionError(args)
+
+    monkeypatch.setattr(run_manifest_module, "git", fake_git)
+    monkeypatch.setenv("LTSR_SEEDS", "0 1")
+    monkeypatch.setenv("LTSR_START_PHASE", "5")
+    monkeypatch.setenv("LTSR_STOP_AFTER_PHASE", "5")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_manifest.py", "resume", "--run-dir", str(run), "--strict"],
+    )
+    assert manifest_main() == 0
+    resumed = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    assert resumed["resumes"][-1]["strict"] is True
+
+    monkeypatch.setenv("LTSR_SEEDS", "0 1 2")
+    assert manifest_main() == 2

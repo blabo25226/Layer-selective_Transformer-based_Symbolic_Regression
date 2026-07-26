@@ -564,6 +564,75 @@ Get-Content .\<campaign-id>_full.tar.gz.sha256
 Phase 8は4 donorsしかないapplication demoであり、seedを増やしても生物学的独立標本数が増えるわけではない。
 seed間CIとdonor間変動を混同せず、真のヒト制御ODEや因果機構を回復したとは主張しない。
 
+## 11. Google Colab ProでPhase別に実行する場合
+
+Colab用Notebookは`notebooks/colab/`にあり、`00_setup_preflight.ipynb`から
+`09_validate_archive.ipynb`まで番号順に使う。詳細計画は
+[`plan/20260726_colabexe.md`](plan/20260726_colabexe.md)を参照する。
+
+### 11.1 Colab固有の前提
+
+- **Python 3.10を必須とする。** 現行Colab標準runtimeが3.11/3.12でも、そのまま本実験を開始しない。
+  Phase 0 Notebookの最初のセルでPython 3.10 Miniconda baseを導入し、runtime再起動後に
+  `sys.version_info[:2] == (3, 10)`を確認する。
+- NotebookをDriveで開いても、このrepositoryの`src/`、`scripts/`、`NSRS/`、`TPSR/`は自動的に見えない。
+  Notebookがbranchを`/content/LTSR`へcloneし、Driveの`source_lock.json`に固定したcommitへcheckoutする。
+- Googleログイン、MFA、Drive mount、GPU runtime接続は人が行う。その後のセル実行とエラー対応はAIへ委任できる。
+- Colab ProでもGPU種類、最大runtime、compute unitsは保証されない。`tmux`はbackend終了への保険にならないため、
+  実行中セルを前景で動かし、Drive checkpointとresumeを使う。
+- Driveにはraw run、checkpoint、DREAM4、GSE112372、archiveを保存する。
+  高頻度I/Oは`/content`で行い、3分ごととPhase/shard完了時にDriveへ同期する。
+
+### 11.2 Phase分割とresume
+
+Colab Notebookは同じ`RUN_ID`へ次の環境変数を渡し、Phaseを1つずつ実行する。
+
+```text
+START_PHASE=<4..8>
+STOP_AFTER_PHASE=<同じPhase>
+RESUME=1
+STRICT_RESUME=1
+DREAM4_SHARD_NETWORKS=1
+```
+
+- Phase 4は6つのseed別audit JSONがすべて存在し、JSONとして読めるseedだけresumeでskipする。
+  全seedが揃った後にaggregate、ranking、stabilityを再構築する。
+- Phase 5/6/8は既存どおりseed単位でresumeする。
+- Phase 7は`seed / size / network`単位へ分割する。本番はSize10/100のnetwork 1–5をすべて実行する。
+- `STRICT_RESUME=1`では固定commit、clean worktree、科学設定が元manifestと一致しなければ停止する。
+- `MAX_PARALLEL_SEEDS`は結果を変えない有界seed並列であり、接続後の実測VRAM/RAMから1 → 2 → 3と上げる。
+
+### 11.3 Colab本実験のPhase 6設定
+
+ユーザー指示により、Colab smoke、pilot、本実験のPhase 6はすべて次へ固定する。
+
+```text
+NOISE="0.1"
+LTSR_DECODE_TIMEOUT_SEC=240
+```
+
+`noise=0.0/0.05/0.2`は計算量緩和のため実行しない。このため、Colab runからH3のノイズ頑健性slopeや
+noise水準間比較を提示しない。Phase 6で評価するのは`noise=0.1`におけるFT主効果、TPSR主効果、
+交互作用、valid率、failure-penalized NMSE、式複雑度、実行時間である。
+既存の4水準CPU pilotや別GPU runと同じ実験条件として集約しない。
+
+### 11.4 Colab成果物
+
+```text
+MyDrive/LTSR_colab/
+  source_lock.json
+  checkpoints/100M.ckpt
+  data/dream4.tar.gz
+  data/gse112372_lps.tar.gz
+  runs/<run-id>/
+  graphs/<run-id>/
+  archives/<run-id>.tar.gz
+  archives/<run-id>.tar.gz.sha256
+```
+
+Phase 9で`validate_gpu_run.py`を通し、`manifest.json`が`complete`、
+`validation.json`が`validated`であることを確認してからarchiveを採用する。
+
 ## 付録A. 実際に使用するGPU PCの実測仕様
 
 2026-07-23にGPU PC上で実測した構成である。本文の手順は特定の機種を前提としないが、

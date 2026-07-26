@@ -126,6 +126,12 @@ def main() -> int:
     if manifest.get("status") not in RESUMABLE_STATUSES:
         parser.error(f"pipeline did not finish: status={manifest.get('status')}")
     dream4 = manifest.get("parameters", {}).get("LTSR_DREAM4") == "1"
+    dream4_networks = [
+        int(value)
+        for value in manifest.get("parameters", {})
+        .get("LTSR_DREAM4_NETWORKS", "1 2 3 4 5")
+        .split()
+    ]
     required = [
         run / "phase4_multiseed" / "contrib_aggregate.json",
         run / "phase4_multiseed" / "absolute_improvements_aggregate.json",
@@ -154,10 +160,21 @@ def main() -> int:
             run / f"phase8_lodo_seed{seed}" / "lodo_results.json",
         ])
         if dream4:
-            required.extend([
-                run / f"phase7_dream4_size10_seed{seed}" / "size10_results.json",
-                run / f"phase7_dream4_size100_seed{seed}" / "size100_results.json",
-            ])
+            for size in (10, 100):
+                legacy = (
+                    run
+                    / f"phase7_dream4_size{size}_seed{seed}"
+                    / f"size{size}_results.json"
+                )
+                if legacy.is_file():
+                    required.append(legacy)
+                else:
+                    required.extend(
+                        run
+                        / f"phase7_dream4_size{size}_seed{seed}_net{net_id}"
+                        / f"size{size}_results.json"
+                        for net_id in dream4_networks
+                    )
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         return fail(run, ["missing required output: " + path for path in missing])

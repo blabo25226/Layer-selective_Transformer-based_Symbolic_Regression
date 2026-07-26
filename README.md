@@ -336,7 +336,8 @@ CPU実験はWindows上のPython 3.10環境で実施した。高beam幅、十分�
 
 2件のskipは、現在のPython 3.12環境ではNeSymReS/Hydra 1.0の互換テストを実行しないことと、
 gitignore対象のDREAM4 archiveが未配置の環境では実データ統合テストを実行しないことによる。
-GPU本実験ではPython 3.10または3.11を使用する。
+GPU本実験ではPython 3.10を使用する。Colabでも標準runtimeの3.11/3.12をそのまま使わず、
+Phase 0 NotebookでPython 3.10環境へ切り替えてからpreflightを行う。
 
 ローカルの `10M.ckpt` はファイル名と異なり、state dict上はencoder/decoder各5層の100M設定側アーキテクチャである。
 そのため `NSRS/jupyter/100M/config.yaml` と組み合わせている。
@@ -646,9 +647,11 @@ GPU実験では各問題について、真の式、推定式、簡約式、変�
 ### 11.1 次に行うGPU実験
 
 1. **事前確認**：[`GPU_RUN.md`](GPU_RUN.md) に従い、CUDA、checkpoint、設定、依存関係をpreflightで確認する。
+   Colabでは [`notebooks/colab/README.md`](notebooks/colab/README.md) のPhase別Notebookを使い、
+   固定commitと固定run設定の成果物をGoogle Driveへ逐次同期する。
 2. **Phase 4再実行**：5–10 seedsで層寄与を測り、validation上の順位、top-3出現率、順位相関を求める。
 3. **Phase 5本比較**：各条件へ同数の学習率・epoch候補を与え、validation CEによるearly stoppingとbest-weight復元を行う。その後、同じseed集合でtop、複数random集合、bottom、fullを独立test上で一度だけ評価し、paired差とt信頼区間を求める。top対fullは事前指定marginによる同等性・非劣性も判定する。
-4. **Phase 6本比較**：複数noise・複数seed・十分なMCTS budgetで2×2比較し、FT効果、TPSR効果、相互作用を分離する。
+4. **Phase 6本比較**：計算量を抑えるためnoiseは0.1だけとし、複数seed・十分なMCTS budgetで2×2比較して、FT効果、TPSR効果、相互作用を分離する。noise slopeは今回の推論対象にしない。
 5. **精度–複雑度評価**：NMSEだけでなく、valid率、式長、演算子数、Pareto frontierを比較する。
 6. **DREAM4再評価**：Size10/100の全networkをtrajectory分割で評価し、regulator selectionとSRの誤差を分解する。
 7. **ヒトLODO再評価**：valid率、donor間性能、外挿安定性、非負性、特異点の有無を確認する。
