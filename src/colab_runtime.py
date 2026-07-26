@@ -27,13 +27,31 @@ REPO_URL = (
 BRANCH = "20260726/gpu-scale-prep-colab"
 
 
-def require_python_310() -> None:
-    """Fail before experiment setup unless the active notebook kernel is 3.10."""
-    if sys.version_info[:2] != (3, 10):
+def require_python_310(executable: str | Path | None = None) -> None:
+    """Require the active interpreter or an explicit worker to be Python 3.10."""
+    if executable is None:
+        version = sys.version.split()[0]
+        major_minor = sys.version_info[:2]
+    else:
+        executable = str(executable)
+        try:
+            version = subprocess.check_output(
+                [
+                    executable,
+                    "-c",
+                    "import sys; print('.'.join(map(str, sys.version_info[:3])))",
+                ],
+                text=True,
+            ).strip()
+            major_minor = tuple(int(value) for value in version.split(".")[:2])
+        except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+            raise RuntimeError(
+                f"cannot execute the requested Python 3.10 worker: {executable}"
+            ) from exc
+    if major_minor != (3, 10):
         raise RuntimeError(
-            "LTSR GPU runs require Python 3.10; active kernel is "
-            f"{sys.version.split()[0]}. Run the first CondaColab bootstrap cell "
-            "and reconnect after its automatic runtime restart."
+            "LTSR GPU runs require Python 3.10; selected interpreter is "
+            f"{version}. Run the first CondaColab bootstrap cell before setup."
         )
 
 
@@ -73,7 +91,11 @@ class ColabRunConfig:
         return values
 
     def pipeline_environment(
-        self, repo_root: Path, phase: int, resume: bool
+        self,
+        repo_root: Path,
+        phase: int,
+        resume: bool,
+        python_executable: str | Path = "/usr/local/bin/python",
     ) -> dict[str, str]:
         if phase not in range(4, 9):
             raise ValueError(f"pipeline phase must be 4..8, got {phase}")
@@ -115,6 +137,7 @@ class ColabRunConfig:
             ),
             "DREAM4_ROOT": str(repo_root / "data" / "dream4"),
             "PYTHONUNBUFFERED": "1",
+            "PY": str(python_executable),
         }
 
 
@@ -350,12 +373,14 @@ def run_phase(
     phase: int,
     *,
     sync_interval_sec: int = 180,
+    python_executable: str | Path = "/usr/local/bin/python",
 ) -> Path:
     """Execute one pipeline phase and checkpoint it to Drive periodically."""
     repo_root = repo_root.resolve()
     drive_root = drive_root.resolve()
     if phase == 7 and not config.dream4:
         raise RuntimeError("Phase 7 is disabled for this run configuration")
+    require_python_310(python_executable)
     assert_locked_source(repo_root, drive_root)
     lock_run_config(drive_root, config)
     restore_static_assets(repo_root, drive_root)
@@ -364,7 +389,11 @@ def run_phase(
     manifest = repo_root / "results" / "runs" / config.run_id / "manifest.json"
     resume = manifest.is_file()
     env = os.environ.copy()
-    env.update(config.pipeline_environment(repo_root, phase, resume))
+    env.update(
+        config.pipeline_environment(
+            repo_root, phase, resume, python_executable=python_executable
+        )
+    )
     command = ["bash", "scripts/run_gpu_pipeline.sh"]
     print(
         f"Starting Phase {phase}: run={config.run_id} kind={config.kind} "
