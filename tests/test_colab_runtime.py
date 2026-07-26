@@ -11,7 +11,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from colab_runtime import config_for, copy_tree, lock_run_config  # noqa: E402
+from colab_runtime import (  # noqa: E402
+    config_for,
+    copy_tree,
+    lock_run_config,
+    run_command,
+)
 
 
 def test_registered_colab_configs_fix_noise_to_point_one():
@@ -28,6 +33,32 @@ def test_registered_colab_configs_fix_noise_to_point_one():
     assert env["STRICT_RESUME"] == "1"
     assert env["RESUME"] == "1"
     assert env["PY"] == "/content/ltsr-py310/bin/python"
+    assert env["MPLBACKEND"] == "Agg"
+
+
+def test_run_command_replaces_colab_inline_matplotlib_backend(
+    monkeypatch, tmp_path
+):
+    observed = {}
+
+    def fake_run(command, *, cwd, env, check):
+        observed.update(
+            command=command,
+            cwd=cwd,
+            backend=env["MPLBACKEND"],
+            unbuffered=env["PYTHONUNBUFFERED"],
+            check=check,
+        )
+
+    monkeypatch.setattr("colab_runtime.subprocess.run", fake_run)
+    run_command(tmp_path, ["python", "-m", "pytest"])
+    assert observed == {
+        "command": ["python", "-m", "pytest"],
+        "cwd": tmp_path,
+        "backend": "Agg",
+        "unbuffered": "1",
+        "check": True,
+    }
 
 
 def test_colab_run_control_refuses_setting_changes_under_same_id(tmp_path):

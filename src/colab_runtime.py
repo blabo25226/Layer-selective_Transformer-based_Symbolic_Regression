@@ -136,6 +136,10 @@ class ColabRunConfig:
                 repo_root / "NSRS" / "jupyter" / "100M" / "eq_setting.json"
             ),
             "DREAM4_ROOT": str(repo_root / "data" / "dream4"),
+            # Colab's controller kernel exports the inline backend, but the
+            # isolated Python 3.10 worker does not load matplotlib_inline.
+            # GPU jobs are headless, so force a backend valid in the worker.
+            "MPLBACKEND": "Agg",
             "PYTHONUNBUFFERED": "1",
             "PY": str(python_executable),
         }
@@ -434,6 +438,9 @@ def run_command(
 ) -> None:
     """Run a diagnostic Phase 0--3 command from the fixed repo root."""
     env = os.environ.copy()
+    # Do not inherit Colab's controller-only inline Matplotlib backend into
+    # the isolated Python 3.10 worker.
+    env["MPLBACKEND"] = "Agg"
     env["PYTHONUNBUFFERED"] = "1"
     if extra_env:
         env.update(extra_env)
