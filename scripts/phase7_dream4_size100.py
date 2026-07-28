@@ -40,6 +40,7 @@ from data.regulator_selection import oracle_regulators  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from evaluation.equation_records import dataset_variable_mapping, make_equation_record  # noqa: E402
 from evaluation.aggregation import aggregate_prediction_scores  # noqa: E402
+from evaluation.decode_timeout import decode_time_limit  # noqa: E402
 from evaluation.grn_metrics import edge_recovery, predicted_edges_from_selections  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from resumable_evaluation import (  # noqa: E402
@@ -63,6 +64,7 @@ HIGH_CONTRIB, LAYER_SOURCE, LAYER_RULE = resolve_selected_layers(PHASE4_CONTRIB,
 if os.environ.get("LTSR_REQUIRE_LIVE_PHASE4", "0") == "1":
     require_live_phase4_ranking(LAYER_SOURCE, PHASE4_CONTRIB)
 SIZE = 100
+DECODE_TIMEOUT_SEC = float(os.environ.get("LTSR_DECODE_TIMEOUT_SEC", "240"))
 
 
 def log(msg: str) -> None:
@@ -128,7 +130,7 @@ def eval_sr(
         out: Dict[str, Any] = {}
         failure_reason = None
         try:
-            with warnings.catch_warnings():
+            with warnings.catch_warnings(), decode_time_limit(DECODE_TIMEOUT_SEC):
                 warnings.simplefilter("ignore")
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
                     io.StringIO()
