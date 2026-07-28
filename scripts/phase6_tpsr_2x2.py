@@ -5,11 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import signal
 import sys
-import threading
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -30,6 +27,7 @@ from data.finetune_dataset import (  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from evaluation.aggregation import aggregate_prediction_scores, true_variables  # noqa: E402
 from evaluation.equation_records import dataset_variable_mapping, make_equation_record  # noqa: E402
+from evaluation.decode_timeout import decode_time_limit as _decode_time_limit  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from models.tpsr_adapter import predict_equation_tpsr  # noqa: E402
 from training.selective_layers import resolve_selected_layers  # noqa: E402
@@ -52,38 +50,6 @@ PHASE4_CONTRIB = ROOT / "results" / "phase_results" / "phase4_multiseed" / "cont
 # as a failure (the conservative outcome, handled by the existing except below).
 # Normal decodes finish in well under a minute, so only true blow-ups are cut.
 DECODE_TIMEOUT_SEC = float(os.environ.get("LTSR_DECODE_TIMEOUT_SEC", "240"))
-
-
-class _DecodeTimeout(Exception):
-    """Raised when a single-problem decode exceeds DECODE_TIMEOUT_SEC."""
-
-
-@contextmanager
-def _decode_time_limit(seconds: float):
-    """Best-effort per-problem wall-clock limit via SIGALRM (main thread, POSIX).
-
-    Off the main thread or without SIGALRM the decode runs unguarded rather than
-    failing; the phase-6 eval loop runs on the main thread. The TPSR decode path
-    does not install its own SIGALRM handler, so there is no nesting conflict.
-    """
-    if (
-        seconds <= 0
-        or not hasattr(signal, "SIGALRM")
-        or threading.current_thread() is not threading.main_thread()
-    ):
-        yield
-        return
-
-    def _handler(signum, frame):
-        raise _DecodeTimeout(f"decode exceeded {seconds:.0f}s")
-
-    old = signal.signal(signal.SIGALRM, _handler)
-    signal.setitimer(signal.ITIMER_REAL, seconds)
-    try:
-        yield
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, old)
 
 
 def log(msg: str) -> None:
