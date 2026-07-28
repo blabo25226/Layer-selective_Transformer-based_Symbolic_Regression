@@ -84,8 +84,63 @@ PYTHON_310 = code(
     """
 )
 
-BOOTSTRAP = code(
-    """
+PHASE7_CONTINUATION_SOURCE_COMMIT = ""
+
+
+def bootstrap_cell(pinned_source_commit: str = "") -> dict:
+    if not pinned_source_commit:
+        return code(
+            """
+            # Google認証とDrive mountはユーザー自身が行う。
+            from google.colab import drive
+            drive.mount("/content/drive")
+
+            import json
+            import os
+            import subprocess
+            import sys
+            from pathlib import Path
+
+            DRIVE_ROOT = Path("/content/drive/MyDrive/LTSR_colab")
+            REPO_ROOT = Path("/content/LTSR")
+            BRANCH = "20260726/gpu-scale-prep-colab"
+            REPO_URL = (
+                "https://github.com/blabo25226/"
+                "Layer-selective_Transformer-based_Symbolic_Regression.git"
+            )
+            DRIVE_ROOT.mkdir(parents=True, exist_ok=True)
+            lock_path = DRIVE_ROOT / "source_lock.json"
+
+            if not (REPO_ROOT / ".git").is_dir():
+                subprocess.run(
+                    ["git", "clone", "--branch", BRANCH, "--single-branch", REPO_URL, str(REPO_ROOT)],
+                    check=True,
+                )
+
+            if lock_path.is_file():
+                locked_commit = json.loads(lock_path.read_text(encoding="utf-8"))["commit"]
+                subprocess.run(["git", "checkout", "--detach", locked_commit], cwd=REPO_ROOT, check=True)
+            else:
+                locked_commit = subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True
+                ).strip()
+                partial = lock_path.with_suffix(".json.partial")
+                partial.write_text(
+                    json.dumps({"branch": BRANCH, "commit": locked_commit}, indent=2),
+                    encoding="utf-8",
+                )
+                os.replace(partial, lock_path)
+
+            sys.path.insert(0, str(REPO_ROOT / "src"))
+            from colab_runtime import assert_locked_source, require_python_310
+
+            require_python_310(PY310)
+            print("locked commit:", assert_locked_source(REPO_ROOT, DRIVE_ROOT))
+            print("Drive root:", DRIVE_ROOT)
+            """
+        )
+    return code(
+        f"""
     # Google認証とDrive mountはユーザー自身が行う。
     from google.colab import drive
     drive.mount("/content/drive")
@@ -99,6 +154,7 @@ BOOTSTRAP = code(
     DRIVE_ROOT = Path("/content/drive/MyDrive/LTSR_colab")
     REPO_ROOT = Path("/content/LTSR")
     BRANCH = "20260726/gpu-scale-prep-colab"
+    PINNED_SOURCE_COMMIT = {pinned_source_commit!r}
     REPO_URL = (
         "https://github.com/blabo25226/"
         "Layer-selective_Transformer-based_Symbolic_Regression.git"
@@ -112,7 +168,25 @@ BOOTSTRAP = code(
             check=True,
         )
 
-    if lock_path.is_file():
+    if PINNED_SOURCE_COMMIT:
+        subprocess.run(
+            ["git", "fetch", "origin", PINNED_SOURCE_COMMIT],
+            cwd=REPO_ROOT,
+            check=True,
+        )
+        locked_commit = PINNED_SOURCE_COMMIT
+        subprocess.run(
+            ["git", "checkout", "--detach", locked_commit],
+            cwd=REPO_ROOT,
+            check=True,
+        )
+        partial = lock_path.with_suffix(".json.partial")
+        partial.write_text(
+            json.dumps({{"branch": BRANCH, "commit": locked_commit}}, indent=2),
+            encoding="utf-8",
+        )
+        os.replace(partial, lock_path)
+    elif lock_path.is_file():
         locked_commit = json.loads(lock_path.read_text(encoding="utf-8"))["commit"]
         subprocess.run(["git", "checkout", "--detach", locked_commit], cwd=REPO_ROOT, check=True)
     else:
@@ -121,7 +195,7 @@ BOOTSTRAP = code(
         ).strip()
         partial = lock_path.with_suffix(".json.partial")
         partial.write_text(
-            json.dumps({"branch": BRANCH, "commit": locked_commit}, indent=2),
+            json.dumps({{"branch": BRANCH, "commit": locked_commit}}, indent=2),
             encoding="utf-8",
         )
         os.replace(partial, lock_path)
@@ -133,7 +207,7 @@ BOOTSTRAP = code(
     print("locked commit:", assert_locked_source(REPO_ROOT, DRIVE_ROOT))
     print("Drive root:", DRIVE_ROOT)
     """
-)
+    )
 
 ENSURE_DEPENDENCIES = code(
     """
@@ -166,23 +240,32 @@ ENSURE_DEPENDENCIES = code(
     """
 )
 
-RUN_CONFIG = code(
-    """
+def run_config_cell(
+    run_id: str = "colab_reduced_20260726_01",
+    *,
+    max_parallel_seeds: int = 2,
+) -> dict:
+    return code(
+        f"""
     # Phase 4--8で同じ3値を使用する。別設定は必ず新しいRUN_IDにする。
     from colab_runtime import config_for
 
     RUN_KIND = "reduced"  # 承認済みの計算量削減版
-    RUN_ID = "colab_reduced_20260726_01"
-    MAX_PARALLEL_SEEDS = 2
+    RUN_ID = "{run_id}"
+    MAX_PARALLEL_SEEDS = {max_parallel_seeds}
     CONFIG = config_for(
         RUN_KIND, RUN_ID, max_parallel_seeds=MAX_PARALLEL_SEEDS
     )
     print(json.dumps(CONFIG.scientific_dict(), indent=2, ensure_ascii=False))
     """
-)
+    )
 
-
-def common_intro(title: str, purpose: str) -> list[dict]:
+def common_intro(
+    title: str,
+    purpose: str,
+    *,
+    pinned_source_commit: str = "",
+) -> list[dict]:
     return [
         markdown(
             f"""
@@ -195,7 +278,7 @@ def common_intro(title: str, purpose: str) -> list[dict]:
             """
         ),
         PYTHON_310,
-        BOOTSTRAP,
+        bootstrap_cell(pinned_source_commit),
         ENSURE_DEPENDENCIES,
     ]
 
@@ -355,10 +438,52 @@ def diagnostic_notebook(phase: int, title: str, command: list[str]) -> dict:
     return notebook(cells)
 
 
-def phase_notebook(phase: int, title: str, purpose: str) -> dict:
-    cells = common_intro(title, purpose)
+def phase_notebook(
+    phase: int,
+    title: str,
+    purpose: str,
+    *,
+    run_id: str = "colab_reduced_20260726_01",
+    max_parallel_seeds: int = 2,
+    pinned_source_commit: str = "",
+    continue_from_run_id: str | None = None,
+) -> dict:
+    cells = common_intro(
+        title,
+        purpose,
+        pinned_source_commit=pinned_source_commit,
+    )
     cells += [
-        RUN_CONFIG,
+        run_config_cell(
+            run_id,
+            max_parallel_seeds=max_parallel_seeds,
+        )
+    ]
+    if continue_from_run_id is not None:
+        cells += [
+            markdown(
+                """
+                ## 旧runからcontinuation runを準備
+
+                コード変更を旧manifestへ隠して混在させず、完成済み成果物を
+                SHA256付きlineageとともに新runへ一度だけ継承する。
+                """
+            ),
+            code(
+                f"""
+                from colab_runtime import prepare_continuation_run
+
+                CONTINUE_FROM_RUN_ID = {continue_from_run_id!r}
+                continuation = prepare_continuation_run(
+                    DRIVE_ROOT,
+                    source_run_id=CONTINUE_FROM_RUN_ID,
+                    target_config=CONFIG,
+                )
+                print("Continuation marker:", continuation)
+                """
+            ),
+        ]
+    cells += [
         markdown(
             f"""
             ## Phase {phase}を実行
@@ -390,13 +515,18 @@ def phase_notebook(phase: int, title: str, purpose: str) -> dict:
     return notebook(cells)
 
 
-def validate_notebook() -> dict:
+def validate_notebook(
+    *,
+    run_id: str = "colab_reduced_20260726_01",
+    pinned_source_commit: str = "",
+) -> dict:
     cells = common_intro(
         "LTSR Colab Phase 9 — validate / archive",
         "Phase 4–8完了runを検査し、raw runとgraphsのtar.gz＋SHA256をDriveへ保存する。",
+        pinned_source_commit=pinned_source_commit,
     )
     cells += [
-        RUN_CONFIG,
+        run_config_cell(run_id),
         code(
             """
             import subprocess
@@ -467,6 +597,7 @@ def notebook(cells: list[dict]) -> dict:
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
+    continuation_run_id = "colab_reduced_20260728_01"
     notebooks = {
         "00_setup_preflight.ipynb": setup_notebook(),
         "01_phase1_data.ipynb": diagnostic_notebook(
@@ -509,14 +640,23 @@ def main() -> int:
         "07_phase7_dream4.ipynb": phase_notebook(
             7,
             "LTSR Colab Phase 7 — DREAM4",
-            "Size10/100をseed×network shardで実行し、trajectory leakageを防ぐ。",
+            "Size10/100をseed×network shardで実行し、Size100はtarget単位でもresumeする。",
+            run_id=continuation_run_id,
+            max_parallel_seeds=1,
+            pinned_source_commit=PHASE7_CONTINUATION_SOURCE_COMMIT,
+            continue_from_run_id="colab_reduced_20260726_01",
         ),
         "08_phase8_human_lodo.ipynb": phase_notebook(
             8,
             "LTSR Colab Phase 8 — GSE112372 LODO",
             "4 donorのcross-donor application demoを実行する。",
+            run_id=continuation_run_id,
+            pinned_source_commit=PHASE7_CONTINUATION_SOURCE_COMMIT,
         ),
-        "09_validate_archive.ipynb": validate_notebook(),
+        "09_validate_archive.ipynb": validate_notebook(
+            run_id=continuation_run_id,
+            pinned_source_commit=PHASE7_CONTINUATION_SOURCE_COMMIT,
+        ),
     }
     for filename, payload in notebooks.items():
         payload["metadata"]["colab"]["name"] = filename

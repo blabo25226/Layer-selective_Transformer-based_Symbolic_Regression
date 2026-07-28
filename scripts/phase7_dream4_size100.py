@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import random
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -41,6 +42,12 @@ from evaluation.equation_records import dataset_variable_mapping, make_equation_
 from evaluation.aggregation import aggregate_prediction_scores  # noqa: E402
 from evaluation.grn_metrics import edge_recovery, predicted_edges_from_selections  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
+from resumable_evaluation import (  # noqa: E402
+    completed_prefix,
+    load_target_checkpoint,
+    restore_rng_state,
+    save_target_checkpoint,
+)
 from training.single_layer import clone_model, train_selective  # noqa: E402
 from training.selective_layers import require_live_phase4_ranking, resolve_selected_layers  # noqa: E402
 from experiment_runtime import phase_output_paths  # noqa: E402
@@ -98,13 +105,24 @@ def make_light_fit(params_fit, beam_size=1, n_restarts=1, stop_time=0.5):
     return p
 
 
-def eval_sr(model, params_fit, problems, source_names=None) -> Dict[str, Any]:
+def eval_sr(
+    model,
+    params_fit,
+    problems,
+    source_names=None,
+    *,
+    completed_rows: Sequence[Mapping[str, Any]] = (),
+    on_target_complete: Callable[[list[dict[str, Any]]], None] | None = None,
+) -> Dict[str, Any]:
+    """Evaluate problems, atomically checkpointing after every completed target."""
     import contextlib
     import io
     import warnings
 
-    rows = []
-    for ds in problems:
+    expected_ids = [str(ds.spec.eq_id) for ds in problems]
+    start = completed_prefix(completed_rows, expected_ids)
+    rows = [dict(row) for row in completed_rows]
+    for index, ds in enumerate(problems[start:], start=start):
         true_vars = ds.spec.variable_names
         expr = ""
         out: Dict[str, Any] = {}
@@ -131,20 +149,29 @@ def eval_sr(model, params_fit, problems, source_names=None) -> Dict[str, Any]:
             if source_names is not None and 0 <= target_index < len(source_names)
             else None
         )
-        rows.append(make_equation_record(
-            eq_id=ds.spec.eq_id,
-            predicted_expr=expr,
-            variable_names=ds.spec.variable_names,
-            mapping=dataset_variable_mapping(ds, source_names),
-            scores=sc,
-            true_expr="",
-            candidate_expressions=out.get("all_preds", []),
-            decoder="nesymres_beam_bfgs",
-            decoder_metadata={"bfgs_loss": out.get("bfgs_loss")},
-            failure_reason=failure_reason,
-            motif=ds.spec.motif,
-            target_gene=target_name,
-        ))
+        rows.append(
+            make_equation_record(
+                eq_id=ds.spec.eq_id,
+                predicted_expr=expr,
+                variable_names=ds.spec.variable_names,
+                mapping=dataset_variable_mapping(ds, source_names),
+                scores=sc,
+                true_expr="",
+                candidate_expressions=out.get("all_preds", []),
+                decoder="nesymres_beam_bfgs",
+                decoder_metadata={"bfgs_loss": out.get("bfgs_loss")},
+                failure_reason=failure_reason,
+                motif=ds.spec.motif,
+                target_gene=target_name,
+            )
+        )
+        if on_target_complete is not None:
+            on_target_complete(rows)
+        log(f"      target checkpoint {index + 1}/{len(problems)}")
+        del out, y_hat
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     return {
         "aggregate": aggregate_prediction_scores(rows),
         "per_problem": rows,
@@ -212,6 +239,32 @@ def main() -> int:
     net_ids = list_net_ids(root, SIZE) if args.all_nets else [args.net_id]
     log(f"DREAM4 root: {root}")
     log(f"Size{SIZE} nets: {net_ids}")
+    checkpoint_identity = {
+        "size": SIZE,
+        "net_ids": net_ids,
+        "seed": args.seed,
+        "k": args.k,
+        "max_vars": args.max_vars,
+        "sr_targets": args.sr_targets,
+        "select_all": args.select_all,
+        "epochs": args.epochs,
+        "lr": args.lr,
+        "batch_size": args.batch_size,
+        "max_points": args.max_points,
+        "beam_size": args.beam_size,
+        "bfgs_restarts": args.bfgs_restarts,
+        "bfgs_stop_time": args.bfgs_stop_time,
+        "layers": list(HIGH_CONTRIB),
+        "ranking_source": str(LAYER_SOURCE),
+    }
+    checkpoint_path = OUT_DIR / "target_checkpoint.pt"
+    saved_checkpoint = load_target_checkpoint(
+        checkpoint_path, expected_identity=checkpoint_identity
+    )
+    progress: dict[str, Any] = (
+        saved_checkpoint["progress"] if saved_checkpoint is not None else {"sr": {}}
+    )
+    progress.setdefault("sr", {})
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     base_model, params_fit = load_nesymres(
@@ -244,6 +297,14 @@ def main() -> int:
     else:
         train_info = {"final_loss": float("nan"), "trainable": 0.0}
     log(f"Selective FT done: trainable={int(train_info.get('trainable', 0)):,}")
+    if saved_checkpoint is not None:
+        restore_rng_state(saved_checkpoint["rng_state"])
+        saved_targets = sum(
+            len(condition.get("per_problem", []))
+            for network in progress["sr"].values()
+            for condition in network.values()
+        )
+        log(f"Resuming target checkpoint: {saved_targets} target evaluations complete")
 
     methods = ["oracle", "corr", "mi", "lasso"]
     all_sel: Dict[str, Any] = {}
@@ -327,16 +388,65 @@ def main() -> int:
         )
 
         sr_net = {}
+        network_progress = progress["sr"].setdefault(f"net{net_id}", {})
+        # Evaluation does not mutate model weights. Reusing these two instances
+        # avoids retaining two extra 100M-parameter clones per seed.
         for name, model, probs in [
-            ("pretrained_oracle", clone_model(base_model), test_oracle),
+            ("pretrained_oracle", base_model, test_oracle),
             ("selective_oracle", ft_model, test_oracle),
-            ("selective_corr", clone_model(ft_model), test_corr),
+            ("selective_corr", ft_model, test_corr),
         ]:
-            log(f"  SR {name} n={len(probs)}")
+            condition_progress = network_progress.get(name, {})
+            completed_rows = condition_progress.get("per_problem", [])
+            elapsed_before = float(condition_progress.get("elapsed_sec", 0.0))
+            completed_prefix(
+                completed_rows, [str(problem.spec.eq_id) for problem in probs]
+            )
+            log(
+                f"  SR {name} n={len(probs)} "
+                f"resume={len(completed_rows)}/{len(probs)}"
+            )
             t0 = time.time()
             model.eval()
-            ev = eval_sr(model, fit, probs, network.gene_names)
-            ev["elapsed_sec"] = time.time() - t0
+
+            def checkpoint_rows(
+                rows: list[dict[str, Any]],
+                *,
+                condition: str = name,
+                prior_elapsed: float = elapsed_before,
+                started_at: float = t0,
+            ) -> None:
+                network_progress[condition] = {
+                    "per_problem": list(rows),
+                    "elapsed_sec": prior_elapsed + time.time() - started_at,
+                }
+                save_target_checkpoint(
+                    checkpoint_path,
+                    identity=checkpoint_identity,
+                    progress=progress,
+                )
+
+            had_work = len(completed_rows) < len(probs)
+            ev = eval_sr(
+                model,
+                fit,
+                probs,
+                network.gene_names,
+                completed_rows=completed_rows,
+                on_target_complete=checkpoint_rows,
+            )
+            ev["elapsed_sec"] = elapsed_before + (
+                time.time() - t0 if had_work else 0.0
+            )
+            network_progress[name] = {
+                "per_problem": ev["per_problem"],
+                "elapsed_sec": ev["elapsed_sec"],
+            }
+            save_target_checkpoint(
+                checkpoint_path,
+                identity=checkpoint_identity,
+                progress=progress,
+            )
             a = ev["aggregate"]
             log(
                 f"    NMSE={fmt(a['nmse'])} R2={fmt(a['r2'])} "
@@ -358,7 +468,12 @@ def main() -> int:
         },
     }
     out_json = OUT_DIR / "size100_results.json"
-    out_json.write_text(json.dumps(sanitize(out), indent=2), encoding="utf-8")
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    partial_out = out_json.with_name(out_json.name + ".partial")
+    partial_out.write_text(
+        json.dumps(sanitize(out), indent=2), encoding="utf-8"
+    )
+    os.replace(partial_out, out_json)
 
     lines = [
         "# Phase 7c: official DREAM4 Size100",

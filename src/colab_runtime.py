@@ -16,6 +16,7 @@ import tarfile
 import time
 import sys
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -299,6 +300,129 @@ def copy_tree(
     return copied
 
 
+CONTINUATION_EXCLUDE_NAMES = frozenset(
+    {
+        "colab_control.json",
+        "continuation_intent.json",
+        "continuation.json",
+        "manifest.json",
+        "pipeline.log",
+        "validation.json",
+    }
+)
+
+
+def prepare_continuation_run(
+    drive_root: Path,
+    *,
+    source_run_id: str,
+    target_config: ColabRunConfig,
+) -> Path:
+    """Copy recoverable artifacts into a new, provenance-linked run.
+
+    A code change must not be hidden inside strict resume of an older manifest.
+    The continuation therefore receives a new run ID and manifest, while this
+    marker records exactly which files were inherited from the old run.
+    """
+    target_run_id = target_config.run_id
+    target_scientific = target_config.scientific_dict()
+    if source_run_id == target_run_id:
+        raise ValueError("continuation source and target run IDs must differ")
+    source = drive_root / "runs" / source_run_id
+    target = drive_root / "runs" / target_run_id
+    marker = target / "continuation.json"
+    intent = target / "continuation_intent.json"
+    if marker.is_file():
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        if (
+            payload.get("source_run_id") != source_run_id
+            or payload.get("target_run_id") != target_run_id
+            or payload.get("target_scientific") != target_scientific
+        ):
+            raise RuntimeError(f"continuation marker mismatch: {marker}")
+        return marker
+    if not source.is_dir():
+        raise FileNotFoundError(f"continuation source run is missing: {source}")
+    source_manifest = source / "manifest.json"
+    if not source_manifest.is_file():
+        raise FileNotFoundError(
+            f"continuation source manifest is missing: {source_manifest}"
+        )
+    source_control = source / "colab_control.json"
+    if not source_control.is_file():
+        raise FileNotFoundError(
+            f"continuation source control is missing: {source_control}"
+        )
+    source_scientific = json.loads(source_control.read_text(encoding="utf-8"))
+    source_without_id = {
+        key: value for key, value in source_scientific.items() if key != "run_id"
+    }
+    target_without_id = {
+        key: value for key, value in target_scientific.items() if key != "run_id"
+    }
+    if source_without_id != target_without_id:
+        raise RuntimeError(
+            "continuation scientific configuration mismatch:\n"
+            f"source={source_without_id}\ntarget={target_without_id}"
+        )
+    expected_intent = {
+        "schema_version": 1,
+        "source_run_id": source_run_id,
+        "target_run_id": target_run_id,
+    }
+    if intent.is_file():
+        existing_intent = json.loads(intent.read_text(encoding="utf-8"))
+        if existing_intent != expected_intent:
+            raise RuntimeError(f"continuation intent mismatch: {intent}")
+    elif target.exists() and any(target.rglob("*")):
+        raise RuntimeError(
+            f"continuation target is not empty and has no intent: {target}"
+        )
+    else:
+        intent.parent.mkdir(parents=True, exist_ok=True)
+        partial_intent = intent.with_name(intent.name + ".partial")
+        partial_intent.write_text(
+            json.dumps(expected_intent, indent=2), encoding="utf-8"
+        )
+        os.replace(partial_intent, intent)
+
+    imported = []
+    for path in sorted(p for p in source.rglob("*") if p.is_file()):
+        if path.name.endswith(".partial") or path.name in CONTINUATION_EXCLUDE_NAMES:
+            continue
+        relative = path.relative_to(source)
+        _atomic_copy(path, target / relative)
+        imported.append(
+            {
+                "path": relative.as_posix(),
+                "sha256": sha256(path),
+                "bytes": path.stat().st_size,
+            }
+        )
+
+    source_manifest_payload = json.loads(
+        source_manifest.read_text(encoding="utf-8")
+    )
+    payload = {
+        "schema_version": 1,
+        "source_run_id": source_run_id,
+        "target_run_id": target_run_id,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "source_manifest_sha256": sha256(source_manifest),
+        "source_git": source_manifest_payload.get("git"),
+        "source_status": source_manifest_payload.get("status"),
+        "target_scientific": target_scientific,
+        "imported_files": imported,
+    }
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    partial = marker.with_name(marker.name + ".partial")
+    partial.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    os.replace(partial, marker)
+    return marker
+
+
 def sync_artifacts(repo_root: Path, drive_root: Path, run_id: str) -> dict[str, int]:
     """Mirror the run and graphs to Drive without deleting prior checkpoints."""
     return {
@@ -420,8 +544,13 @@ def run_phase(
     restore_static_assets(repo_root, drive_root)
     restore_artifacts(repo_root, drive_root, config.run_id)
 
-    manifest = repo_root / "results" / "runs" / config.run_id / "manifest.json"
-    resume = manifest.is_file()
+    run_dir = repo_root / "results" / "runs" / config.run_id
+    manifest = run_dir / "manifest.json"
+    continuation = run_dir / "continuation.json"
+    # A continuation has inherited completed shard sentinels but intentionally
+    # has no old manifest. RESUME=1 lets the pipeline skip those sentinels while
+    # run_manifest still creates a fresh manifest at the current source commit.
+    resume = manifest.is_file() or continuation.is_file()
     env = os.environ.copy()
     env.update(
         config.pipeline_environment(
