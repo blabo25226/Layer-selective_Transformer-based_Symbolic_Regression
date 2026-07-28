@@ -85,7 +85,7 @@ PYTHON_310 = code(
 )
 
 PHASE7_CONTINUATION_SOURCE_COMMIT = (
-    "8f0a780b794ea342aef9f5ec1b4e377d0e3a5314"
+    "185264013a0c5efff8ad0e21ae64de6c6ae2fefa"
 )
 
 
