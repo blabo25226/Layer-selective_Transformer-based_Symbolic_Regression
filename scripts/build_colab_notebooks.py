@@ -84,7 +84,9 @@ PYTHON_310 = code(
     """
 )
 
-PHASE7_CONTINUATION_SOURCE_COMMIT = ""
+PHASE7_CONTINUATION_SOURCE_COMMIT = (
+    "8f0a780b794ea342aef9f5ec1b4e377d0e3a5314"
+)
 
 
 def bootstrap_cell(pinned_source_commit: str = "") -> dict:
