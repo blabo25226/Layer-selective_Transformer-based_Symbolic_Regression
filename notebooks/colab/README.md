@@ -31,7 +31,11 @@
 - Colab UI kernelの版にかかわらず、`/content/ltsr-py310/bin/python`のworkerがPython 3.10でなければ後続Phaseを実行しない。
 - NotebookをDriveで開いてもrepoファイルは自動的に見えない。
   各Notebookが固定commitを`/content/LTSR`へcloneする。
-- Phase 4–8では同じ`RUN_KIND`と`RUN_ID`を使う。
+- 通常はPhase 4–8で同じ`RUN_KIND`と`RUN_ID`を使う。2026-07-28のPhase 7
+  RAM枯渇対応では、旧runの完成済み成果物をSHA256付きlineageで
+  `colab_reduced_20260728_01`へ継承し、Phase 7–9はこのcontinuation runを使う。
+- Phase 7 Size100はtargetごとに式レコードとRNG状態を原子的保存する。
+  runtime切断後は完成済みtargetを検査してskipし、Phase 7だけseedを逐次実行する。
 - Phase 6は`noise=0.1`だけを実行し、noise slopeは評価しない。
 - Colabの一時VM上の成果物は定期的に
   `MyDrive/LTSR_colab/runs/<run-id>/`へ同期される。

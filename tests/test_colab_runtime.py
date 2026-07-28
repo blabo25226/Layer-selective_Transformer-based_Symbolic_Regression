@@ -15,6 +15,7 @@ from colab_runtime import (  # noqa: E402
     config_for,
     copy_tree,
     lock_run_config,
+    prepare_continuation_run,
     restore_artifacts,
     run_command,
 )
@@ -112,6 +113,58 @@ def test_restore_artifacts_does_not_copy_drive_control_file(tmp_path):
 
     assert restore_artifacts(repo, drive, "smoke") == 0
     assert not (repo / "results" / "runs" / "smoke").exists()
+
+
+def test_prepare_continuation_run_copies_results_with_lineage(tmp_path):
+    drive = tmp_path / "drive"
+    source = drive / "runs" / "old"
+    source.mkdir(parents=True)
+    (source / "manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "git": {"commit": "old-commit", "branch": "old-branch"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    source_config = config_for("smoke", "old")
+    (source / "colab_control.json").write_text(
+        json.dumps(source_config.scientific_dict()), encoding="utf-8"
+    )
+    result = source / "phase7_dream4_size100_seed0_net1" / "size100_results.json"
+    result.parent.mkdir()
+    result.write_text('{"complete": true}', encoding="utf-8")
+    logs = source / "logs"
+    logs.mkdir()
+    (logs / "pipeline.log").write_text("old log", encoding="utf-8")
+
+    marker = prepare_continuation_run(
+        drive,
+        source_run_id="old",
+        target_config=config_for("smoke", "new"),
+    )
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert payload["source_run_id"] == "old"
+    assert payload["source_git"]["commit"] == "old-commit"
+    assert [row["path"] for row in payload["imported_files"]] == [
+        "phase7_dream4_size100_seed0_net1/size100_results.json"
+    ]
+    target = drive / "runs" / "new"
+    assert (
+        target / "phase7_dream4_size100_seed0_net1" / "size100_results.json"
+    ).is_file()
+    assert not (target / "manifest.json").exists()
+    assert not (target / "colab_control.json").exists()
+    assert not (target / "logs" / "pipeline.log").exists()
+    assert (
+        prepare_continuation_run(
+            drive,
+            source_run_id="old",
+            target_config=config_for("smoke", "new"),
+        )
+        == marker
+    )
 
 
 def test_generated_notebooks_have_no_saved_execution_state():

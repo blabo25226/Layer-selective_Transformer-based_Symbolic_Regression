@@ -119,6 +119,11 @@ def main() -> int:
             "data_fingerprints": [tree_sha256(path) for path in args.data_path],
             "git_dirty": bool(git("status", "--porcelain")),
         }
+        continuation = args.run_dir / "continuation.json"
+        if continuation.is_file():
+            data["continuation"] = json.loads(
+                continuation.read_text(encoding="utf-8")
+            )
     elif args.action == "stage":
         if record_stage(path, args.stage, "failed" if args.status == "failed" else "complete") is None:
             print(f"no manifest to annotate: {path}", file=sys.stderr)
