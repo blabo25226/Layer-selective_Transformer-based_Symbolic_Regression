@@ -799,3 +799,7 @@ tmux new-session -d -s ltsr-auto -c "$PWD" \
 
 - `results/runs/`はgitignore（生成物・全予測・ログ・入力）。GPU PCだけに置かず、§9の手順で`tar.gz`＋`sha256`を作り、
   Drive/共有ドライブへ**コピー**（移動ではなく）する。ローカルはPhase 7/8のresume用に残す。
+
+# memo20260727
+- probingの実装
+- 演算子セットの見直し。
