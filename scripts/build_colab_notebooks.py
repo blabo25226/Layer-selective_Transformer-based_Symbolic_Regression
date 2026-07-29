@@ -549,6 +549,29 @@ def validate_notebook(
             restore_artifacts(REPO_ROOT, DRIVE_ROOT, RUN_ID)
             run_dir = REPO_ROOT / "results" / "runs" / RUN_ID
             subprocess.run(
+                [
+                    str(PY310),
+                    "scripts/aggregate_phase8_runs.py",
+                    "--run-dir",
+                    str(run_dir),
+                    "--seeds",
+                    *CONFIG.seeds.split(),
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+            )
+            phase8_summary_path = (
+                run_dir / "phase8_lodo_multiseed" / "summary.json"
+            )
+            phase8_summary = json.loads(
+                phase8_summary_path.read_text(encoding="utf-8")
+            )
+            if not phase8_summary.get("pysr_included"):
+                raise RuntimeError(
+                    "Phase 8 aggregation did not include local PySR results"
+                )
+            print("Phase 8 aggregation: PySR included")
+            subprocess.run(
                 [str(PY310), "scripts/validate_gpu_run.py", "--run-dir", str(run_dir)],
                 cwd=REPO_ROOT,
                 check=True,

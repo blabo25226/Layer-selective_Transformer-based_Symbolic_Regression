@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from baselines.pysr_runner import fit_pysr_expression
+from scripts.build_colab_notebooks import validate_notebook
 from scripts.validate_gpu_run import resolve_dream4_networks
 
 
@@ -116,6 +117,22 @@ def test_phase8_aggregate_merges_local_pysr(tmp_path, monkeypatch) -> None:
     )
     assert summary["pysr_included"] is True
     assert set(summary["summary"]) == {"pretrained_beam", "pysr"}
+
+
+def test_phase9_aggregates_local_pysr_before_validation() -> None:
+    payload = validate_notebook(
+        run_id="test_run",
+        pinned_source_commit="deadbeef",
+    )
+    source = "\n".join(
+        "".join(cell["source"])
+        for cell in payload["cells"]
+        if cell["cell_type"] == "code"
+    )
+    aggregate_at = source.index("scripts/aggregate_phase8_runs.py")
+    validate_at = source.index("scripts/validate_gpu_run.py")
+    assert aggregate_at < validate_at
+    assert 'phase8_summary.get("pysr_included")' in source
 
 
 def test_validator_accepts_documented_phase7_curtailment(tmp_path) -> None:
