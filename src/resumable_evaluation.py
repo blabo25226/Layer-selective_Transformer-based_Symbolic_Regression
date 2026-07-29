@@ -14,6 +14,28 @@ import torch
 CHECKPOINT_VERSION = 1
 
 
+class TargetEvaluationBudgetReached(Exception):
+    """Signal a clean process recycle after a bounded number of targets."""
+
+
+class TargetEvaluationBudget:
+    """Count newly checkpointed targets and request a process recycle."""
+
+    def __init__(self, limit: int) -> None:
+        if limit < 0:
+            raise ValueError(f"target evaluation budget must be >= 0, got {limit}")
+        self.limit = limit
+        self.completed = 0
+
+    def record_checkpoint(self) -> None:
+        """Record one durable target and raise when the process budget is spent."""
+        self.completed += 1
+        if self.limit > 0 and self.completed >= self.limit:
+            raise TargetEvaluationBudgetReached(
+                f"checkpointed {self.completed} new targets; recycle process"
+            )
+
+
 def capture_rng_state() -> dict[str, Any]:
     """Capture the RNG state needed to continue a target sequence exactly."""
     return {

@@ -9,11 +9,27 @@ import pytest
 import torch
 
 from src.resumable_evaluation import (
+    TargetEvaluationBudget,
+    TargetEvaluationBudgetReached,
     completed_prefix,
     load_target_checkpoint,
     restore_rng_state,
     save_target_checkpoint,
 )
+
+
+def test_target_evaluation_budget_requests_recycle_after_durable_count():
+    budget = TargetEvaluationBudget(2)
+    budget.record_checkpoint()
+    with pytest.raises(TargetEvaluationBudgetReached, match="2 new targets"):
+        budget.record_checkpoint()
+
+    unlimited = TargetEvaluationBudget(0)
+    for _ in range(100):
+        unlimited.record_checkpoint()
+
+    with pytest.raises(ValueError, match="must be >= 0"):
+        TargetEvaluationBudget(-1)
 
 
 def test_target_checkpoint_restores_rng_and_progress(tmp_path):

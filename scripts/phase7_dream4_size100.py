@@ -44,6 +44,8 @@ from evaluation.decode_timeout import decode_time_limit  # noqa: E402
 from evaluation.grn_metrics import edge_recovery, predicted_edges_from_selections  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from resumable_evaluation import (  # noqa: E402
+    TargetEvaluationBudget,
+    TargetEvaluationBudgetReached,
     completed_prefix,
     load_target_checkpoint,
     restore_rng_state,
@@ -228,8 +230,15 @@ def main() -> int:
     parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--bfgs-restarts", type=int, default=1)
     parser.add_argument("--bfgs-stop-time", type=float, default=0.5)
+    parser.add_argument(
+        "--target-eval-budget",
+        type=int,
+        default=0,
+        help="Exit 75 after this many newly checkpointed targets (0=unbounded)",
+    )
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+    target_budget = TargetEvaluationBudget(args.target_eval_budget)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -427,6 +436,7 @@ def main() -> int:
                     identity=checkpoint_identity,
                     progress=progress,
                 )
+                target_budget.record_checkpoint()
 
             had_work = len(completed_rows) < len(probs)
             ev = eval_sr(
@@ -563,4 +573,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except TargetEvaluationBudgetReached as exc:
+        log(f"[target budget] {exc}")
+        exit_code = 75
+    raise SystemExit(exit_code)

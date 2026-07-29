@@ -28,6 +28,7 @@ NMSE_EQUIV_MARGIN=${NMSE_EQUIV_MARGIN:-0.05}
 START_PHASE=${START_PHASE:-4}
 STOP_AFTER_PHASE=${STOP_AFTER_PHASE:-8}
 LTSR_DECODE_TIMEOUT_SEC=${LTSR_DECODE_TIMEOUT_SEC:-240}
+LTSR_PHASE7_TARGET_EVAL_BUDGET=${LTSR_PHASE7_TARGET_EVAL_BUDGET:-0}
 
 # --- Speed / robustness knobs (default values reproduce the original behavior) ---
 # MAX_PARALLEL_SEEDS>1 runs the per-seed loops of phases 4/5/6/7/8 concurrently.
@@ -68,6 +69,7 @@ export LTSR_START_PHASE="$START_PHASE" LTSR_STOP_AFTER_PHASE="$STOP_AFTER_PHASE"
 export LTSR_MAX_PARALLEL_SEEDS="$MAX_PARALLEL_SEEDS" LTSR_RESUME="$RESUME"
 export LTSR_STRICT_RESUME="$STRICT_RESUME"
 export LTSR_DECODE_TIMEOUT_SEC
+export LTSR_PHASE7_TARGET_EVAL_BUDGET
 
 : "${LTSR_WEIGHTS:?Set LTSR_WEIGHTS to the GPU checkpoint path}"
 export LTSR_CONFIG=${LTSR_CONFIG:-"$PWD/NSRS/jupyter/100M/config.yaml"}
@@ -189,6 +191,7 @@ echo "Validation tuning: lr_grid=$LR_GRID epoch_grid=$EPOCH_GRID patience=$PATIE
 echo "max_parallel_seeds=$MAX_PARALLEL_SEEDS resume=$RESUME strict_resume=$STRICT_RESUME"
 echo "phase_range=$START_PHASE..$STOP_AFTER_PHASE dream4_shards=$DREAM4_SHARD_NETWORKS"
 echo "noise=$NOISE decode_timeout_sec=$LTSR_DECODE_TIMEOUT_SEC"
+echo "phase7_target_eval_budget=$LTSR_PHASE7_TARGET_EVAL_BUDGET"
 
 if [ "$START_PHASE" -le 4 ]; then
   if [ "$RESUME" = "1" ] && [ -d "$DATA" ]; then
@@ -288,6 +291,32 @@ if [ "$STOP_AFTER_PHASE" -eq 6 ]; then
   exit 0
 fi
 
+run_phase7_size100_chunked() {
+  local sentinel="$1" phase_tag="$2"
+  shift 2
+  local rc
+  while [ ! -f "$sentinel" ]; do
+    if LTSR_PHASE_TAG="$phase_tag" "${PY_CMD[@]}" \
+      scripts/phase7_dream4_size100.py "$@" \
+      --target-eval-budget "$LTSR_PHASE7_TARGET_EVAL_BUDGET"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    if [ "$rc" -eq 75 ]; then
+      echo "[target budget] Recycling Phase7 Size100 worker: $phase_tag"
+      continue
+    fi
+    if [ "$rc" -ne 0 ]; then
+      return "$rc"
+    fi
+    if [ ! -f "$sentinel" ]; then
+      echo "ERROR: Phase7 Size100 exited without its result sentinel: $sentinel" >&2
+      return 2
+    fi
+  done
+}
+
 if _phase_selected 7 && [ "$DREAM4" = "1" ]; then
   test -d "$DREAM4_ROOT"
   run_phase7_seed() {
@@ -302,7 +331,9 @@ if _phase_selected 7 && [ "$DREAM4" = "1" ]; then
             --bfgs-restarts "$BFGS_RESTARTS" --bfgs-stop-time "$BFGS_STOP"
         fi
         if ! _resume_skip "$LTSR_RUN_DIR/phase7_dream4_size100_seed${seed}_net${net}/size100_results.json" "Phase7 size100 seed${seed} net${net}"; then
-          LTSR_PHASE_TAG="seed${seed}_net${net}" "${PY_CMD[@]}" scripts/phase7_dream4_size100.py \
+          run_phase7_size100_chunked \
+            "$LTSR_RUN_DIR/phase7_dream4_size100_seed${seed}_net${net}/size100_results.json" \
+            "seed${seed}_net${net}" \
             --dream4-root "$DREAM4_ROOT" --net-id "$net" --select-all \
             --sr-targets "$DREAM4_SR_TARGETS" --seed "$seed" --epochs "$EPOCHS" \
             --beam-size "$BEAM" --bfgs-restarts "$BFGS_RESTARTS" \
@@ -318,7 +349,9 @@ if _phase_selected 7 && [ "$DREAM4" = "1" ]; then
           --bfgs-restarts "$BFGS_RESTARTS" --bfgs-stop-time "$BFGS_STOP"
       fi
       if ! _resume_skip "$LTSR_RUN_DIR/phase7_dream4_size100_seed${seed}/size100_results.json" "Phase7 size100 seed${seed}"; then
-        LTSR_PHASE_TAG="seed${seed}" "${PY_CMD[@]}" scripts/phase7_dream4_size100.py \
+        run_phase7_size100_chunked \
+          "$LTSR_RUN_DIR/phase7_dream4_size100_seed${seed}/size100_results.json" \
+          "seed${seed}" \
           --dream4-root "$DREAM4_ROOT" --all-nets --select-all \
           --sr-targets "$DREAM4_SR_TARGETS" --seed "$seed" --epochs "$EPOCHS" \
           --beam-size "$BEAM" --bfgs-restarts "$BFGS_RESTARTS" \
