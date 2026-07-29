@@ -36,6 +36,7 @@ def test_registered_colab_configs_fix_noise_to_point_one():
     assert env["RESUME"] == "1"
     assert env["PY"] == "/content/ltsr-py310/bin/python"
     assert env["MPLBACKEND"] == "Agg"
+    assert env["LTSR_PHASE7_TARGET_EVAL_BUDGET"] == "60"
 
 
 def test_reduced_colab_config_applies_the_approved_compute_budget():

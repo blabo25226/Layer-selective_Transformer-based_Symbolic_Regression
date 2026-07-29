@@ -129,6 +129,9 @@ class ColabRunConfig:
             "START_PHASE": str(phase),
             "STOP_AFTER_PHASE": str(phase),
             "LTSR_DECODE_TIMEOUT_SEC": str(self.decode_timeout_sec),
+            # Operational RAM guard only: target checkpoints restore the exact
+            # RNG state, so recycling the worker does not change the experiment.
+            "LTSR_PHASE7_TARGET_EVAL_BUDGET": "60",
             "LTSR_WEIGHTS": str(repo_root / "NSRS" / "weights" / "100M.ckpt"),
             "LTSR_CONFIG": str(
                 repo_root / "NSRS" / "jupyter" / "100M" / "config.yaml"
