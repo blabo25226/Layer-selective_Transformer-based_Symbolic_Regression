@@ -583,6 +583,10 @@ def validate_notebook(
 
             archive_dir = DRIVE_ROOT / "archives"
             archive_dir.mkdir(parents=True, exist_ok=True)
+            graph_dir = REPO_ROOT / "graphs" / RUN_ID
+            if not graph_dir.is_dir():
+                graph_dir.mkdir(parents=True, exist_ok=True)
+                print("No graph artifacts were generated; archiving an empty graph directory")
             archive = archive_dir / f"{RUN_ID}.tar.gz"
             subprocess.run(
                 [
