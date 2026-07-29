@@ -52,11 +52,13 @@ def test_pysr_adapter_uses_reduced_budget(monkeypatch) -> None:
         ["x_1"],
         niterations=12,
         random_state=7,
+        timeout_in_seconds=15,
     )
     assert expression == "x_1"
     assert captured["niterations"] == 12
     assert captured["random_state"] == 7
     assert captured["parallelism"] == "multithreading"
+    assert captured["timeout_in_seconds"] == 15.0
 
 
 def test_phase8_aggregate_merges_local_pysr(tmp_path, monkeypatch) -> None:

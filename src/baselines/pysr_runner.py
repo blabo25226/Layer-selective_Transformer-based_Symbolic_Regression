@@ -14,11 +14,12 @@ def fit_pysr_expression(
     *,
     niterations: int,
     random_state: int = 0,
+    timeout_in_seconds: float | None = None,
 ) -> str:
     """Fit one bounded PySR problem and return its best expression."""
     from pysr import PySRRegressor
 
-    model = PySRRegressor(
+    kwargs = dict(
         niterations=niterations,
         binary_operators=["+", "-", "*", "/"],
         unary_operators=["square"],
@@ -29,5 +30,8 @@ def fit_pysr_expression(
         random_state=random_state,
         parallelism="multithreading",
     )
+    if timeout_in_seconds is not None:
+        kwargs["timeout_in_seconds"] = float(timeout_in_seconds)
+    model = PySRRegressor(**kwargs)
     model.fit(X, y, variable_names=list(variable_names))
     return str(model.get_best()["equation"])
