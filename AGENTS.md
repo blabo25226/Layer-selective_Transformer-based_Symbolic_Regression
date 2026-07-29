@@ -24,9 +24,11 @@ $$
 タスクに着手する前に、最低限次を確認する。
 
 1. `git status --short` と `git branch --show-current`
-2. [`README.md`](README.md)：研究背景、現状、CPU予備結果、重要な限界
+2. [`README.md`](README.md)：研究背景、現状、CPU pilot、GPU_RUN1結果、重要な限界
 3. [`plan/20260714_firstplan.md`](plan/20260714_firstplan.md)：研究質問と当初計画
-4. GPU実験に関係する場合は [`GPU_RUN.md`](GPU_RUN.md)
+4. GPU実験に関係する場合は実行手順と実施記録の [`GPU_RUN1.md`](GPU_RUN1.md)、実施済みGPU_RUN1は
+   [`results/GPU_RUN1_report.md`](results/GPU_RUN1_report.md)、次回計画は
+   [`plan/20260729_GPU_RUN2.md`](plan/20260729_GPU_RUN2.md)
 5. 図表を作る場合は [`graphs/README.md`](graphs/README.md)
 6. 対象Phaseの `results/phase_results/*_report.md` と実行スクリプト
 7. 変更対象に対応する `tests/` のテスト
@@ -36,10 +38,15 @@ $$
 ## 3. 現在の研究状態
 
 - CPU上でPhase 0–8のパイプラインと小規模な予備実験を実施済み。
-- GPUによる多seed・大規模な本実験は未実施。
+- Google Colab ProのNVIDIA L4で、3 seeds・noise 0.1のGPU_RUN1 reduced runをPhase 0–9まで実施済み。
+- GPU_RUN1は単一commit・全network・統一budgetのpaper runではない。Phase 7主集計はDREAM4 networks 1–3であり、
+  複数のprovenance付き継続runを含む。
+- GPU_RUN1では少数decoder層が全層FTと同等の数値性能を示したが、top対randomの差は未確定で、
+  symbolic recovery、高次元regulator selection、方法間の公平なbudget比較が未解決である。
 - READMEにあるCPU結果の一部は、最新の評価設計修正より前に生成された **legacy pilot** である。
 - 最新コードでは、validation/test分離、paired seed、Studentのt区間、trajectory分割、failure-aware集計などを修正済み。
 - CPU pilotの数値は研究の方向確認には使えるが、論文レベルの仮説確証として扱わない。
+- GPU_RUN1の数値も探索的なreduced runとして扱い、GPU_RUN2または後続の固定commit確認runと混ぜない。
 - `gpu-scale-prep` はGPU本実験の準備と再現性強化を含む作業ブランチである。`main` との関係は毎回Gitで確認する。
 
 研究状態を更新した場合は、コードだけでなくREADME、GPU_RUN、該当Phaseレポートのどれを更新すべきか検討する。
@@ -180,7 +187,15 @@ CPU pilotの可視化は `graphs/cpu_pilot/` を使う。ファイル名にはPh
 - AIが生成した架空の論文、DOI、数値、引用を残さない。
 - CPU pilotとGPU本結果、観測事実と推測、支持された仮説と未支持の仮説を区別する。
 
-### 6.5 GitHub MarkdownとTeXの注意点
+### 6.5 `.gitkeep`
+
+- `.gitkeep`は、Gitが空directoryを追跡しないことを補う一時的なplaceholderとしてだけ使う。
+- directory内に追跡対象の実ファイルが追加された、directory自体を残す必要がなくなった、またはignore規則だけで目的を
+  達成できるようになった場合、不要な`.gitkeep`はすぐに削除してよい。慣例だけを理由に残し続けない。
+- 削除前に、必要な空directory構造やignoreの例外を壊さないことを確認する。大容量成果物を追跡させるために
+  `.gitkeep`やignore規則を変更してはならない。
+
+### 6.6 GitHub MarkdownとTeXの注意点
 
 READMEはローカルエディタのプレビューだけでなく、GitHub上で正しく表示される必要がある。
 このリポジトリでは、MarkdownとTeXが衝突しやすい箇所について次の形式を使う。
