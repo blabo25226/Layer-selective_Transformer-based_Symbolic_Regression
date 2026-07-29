@@ -90,6 +90,9 @@ PHASE7_CONTINUATION_SOURCE_COMMIT = (
 PHASE8_OPTIMIZED_SOURCE_COMMIT = (
     "9db00f4d567de5c55846587dbda430d1ab6cca0b"
 )
+PHASE9_PYSR_INTEGRATION_SOURCE_COMMIT = (
+    "8721989450bbf6170ffd62cf0ac82a866e800aed"
+)
 
 
 def bootstrap_cell(pinned_source_commit: str = "") -> dict:
@@ -685,7 +688,7 @@ def main() -> int:
         ),
         "09_validate_archive.ipynb": validate_notebook(
             run_id=phase8_run_id,
-            pinned_source_commit=PHASE8_OPTIMIZED_SOURCE_COMMIT,
+            pinned_source_commit=PHASE9_PYSR_INTEGRATION_SOURCE_COMMIT,
         ),
     }
     for filename, payload in notebooks.items():
