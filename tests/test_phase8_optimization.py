@@ -133,6 +133,8 @@ def test_phase9_aggregates_local_pysr_before_validation() -> None:
     validate_at = source.index("scripts/validate_gpu_run.py")
     assert aggregate_at < validate_at
     assert 'phase8_summary.get("pysr_included")' in source
+    assert 'graph_dir = REPO_ROOT / "graphs" / RUN_ID' in source
+    assert "graph_dir.mkdir(parents=True, exist_ok=True)" in source
 
 
 def test_validator_accepts_documented_phase7_curtailment(tmp_path) -> None:
