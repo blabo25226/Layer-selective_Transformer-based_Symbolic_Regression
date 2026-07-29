@@ -1,0 +1,35 @@
+name: Docker
+
+on:
+  pull_request:
+    branches:
+      - 'master'
+      - 'release-*'
+    paths:
+      - '.github/workflows/CI_docker.yml'
+      - 'Dockerfile'
+      - 'pyproject.toml'
+      - 'pysr/juliapkg.json'
+      - 'uv.lock'
+  schedule:
+    - cron: "0 10 1 * *"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        arch: ['linux/amd64']
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build docker
+        run: docker build --platform=${{ matrix.arch }} -t pysr .
+      - name: Test docker
+        run: docker run --platform=${{ matrix.arch }} --rm pysr /bin/bash -c 'pip install pytest nbval && python3 -m pysr test main,cli,startup'

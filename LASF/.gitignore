@@ -1,0 +1,320 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+*.iml
+*.xml
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Machine Learning / Data Science specific
+# Models
+*.pt
+*.pth
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.hdf5
+*.onnx
+*.pb
+*.tflite
+*.bin
+*.safetensors
+
+# Datasets
+data/datasets/
+data/raw/
+data/external/
+*.csv
+*.tsv
+*.json
+*.jsonl
+*.parquet
+*.feather
+*.arrow
+
+# Keep small sample/config datasets
+!data/sample/
+!data/config/
+!**/sample_*.json
+!**/config_*.json
+
+# Experiment results
+results/
+experiments/
+outputs/
+logs/
+plots/
+figures/
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+*.eps
+
+# Keep important result summaries
+!results/README.md
+!results/summary/
+
+# Cache directories
+cache/
+.cache/
+__pycache__/
+.transformers_cache/
+.huggingface/
+.datasets/
+
+# Checkpoints and temporary files
+checkpoints/
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Weights & Biases
+wandb/
+
+# MLflow
+mlruns/
+.mlflow/
+
+# TensorBoard
+runs/
+tensorboard_logs/
+
+# IDE and Editor files
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+.idea
+*.iml
+*.ipr
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+*.exe
+*.msi
+*.msm
+*.msp
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Configuration files with sensitive information
+config.json
+secrets.json
+.secrets
+*.key
+*.pem
+.env.local
+.env.production
+
+# API keys and tokens
+.openai_key
+.huggingface_token
+*.token
+
+# Large files that shouldn't be in git
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.7z
+*.rar
+
+# Keep small zip files for samples
+!samples/*.zip
+!examples/*.zip
+
+# Ignore specific project directories
+/models/
+/raw_data/
+/processed_data/
+/model_cache/
+
+# But keep important structure files
+!models/README.md
+!raw_data/README.md
+!processed_data/README.md
+
+# Jupyter notebook outputs (but keep the notebooks)
+*.ipynb
+!notebooks/examples/*.ipynb
+!notebooks/tutorials/*.ipynb
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Compressed files (usually large datasets/models)
+*.gz
+*.bz2
+*.xz
+*.lz4
+*.zst
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Memory dumps
+*.dmp
+
+# Profiling data
+*.prof
+
+# Coverage reports
+htmlcov/
+.coverage
+coverage.xml
+
+# Pytest
+.pytest_cache/
+
+# GPU memory dumps
+*.nvprof
+*.nsys-rep
+
+# Slurm job files
+slurm-*.out
+*.slurm
+/scripts/

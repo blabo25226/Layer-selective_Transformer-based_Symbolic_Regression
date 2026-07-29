@@ -1,0 +1,452 @@
+[
+    {
+        "eq_string": "-2.187*tan(-5.433*x_1 + x_3 + cos(x_2 - 1.11270056282437*exp(0.059*x_1)) + 7.841)"
+    },
+    {
+        "eq_string": "x_1 + x_2 + sin(tan(exp(sin(x_1))))"
+    },
+    {
+        "eq_string": "cos(x_3 + sin(x_1 - x_2)) + tan(x_1 + 6.974)"
+    },
+    {
+        "eq_string": "tan(x_1 + x_2) + tan(x_1 - sin(x_1))"
+    },
+    {
+        "eq_string": "tan(0.051*x_1 + x_2 + tan(x_3 - sin(x_2)) - 5.430971) + 9.821"
+    },
+    {
+        "eq_string": "exp(-x_1 + x_2 + cos(0.075*x_1 + tan(x_1)))"
+    },
+    {
+        "eq_string": "exp(x_3) + cos(x_1 + tan(x_2 + x_3))"
+    },
+    {
+        "eq_string": "-0.076*sin(-x_1 - x_2 + sin(x_3) + tan(x_1) + 1.076)"
+    },
+    {
+        "eq_string": "exp(-x_2 + cos(0.357*x_1)) + sin(x_1)"
+    },
+    {
+        "eq_string": "-sin(exp(x_1) - sin(x_1 - x_2))"
+    },
+    {
+        "eq_string": "x_1 + tan(x_1) + tan(x_3 + exp(x_2))"
+    },
+    {
+        "eq_string": "2.777*x_1 + x_3 + tan(x_2 + 2.71460977460786*exp(x_1 + x_2)) - 3.568"
+    },
+    {
+        "eq_string": "x_1 - cos(1.883*x_1 - x_2 + x_3 + sin(x_3)) + 3.841"
+    },
+    {
+        "eq_string": "exp(x_1 - x_2 + exp(x_1)) + sin(x_1)"
+    },
+    {
+        "eq_string": "exp(tan(9.80605448984741*exp(x_1))) + 1.293*cos(x_1) + 12.485495"
+    },
+    {
+        "eq_string": "tan(x_1 + cos(x_1 - 1.1662370209674*exp(x_1)))"
+    },
+    {
+        "eq_string": "-x_1 + 0.189*x_2 + cos(x_1 + 0.616) + 0.375*tan(x_3 + x_4) - 1.716309"
+    },
+    {
+        "eq_string": "x_1 - 4.69464667951715*exp(x_1) + 1.643*cos(cos(cos(0.125*x_2) + 7.098)) + 1.43"
+    },
+    {
+        "eq_string": "x_1 + x_2 + x_3 + cos(x_2) + cos(4.596*x_3)"
+    },
+    {
+        "eq_string": "x_2 + tan(sin(0.109*exp(tan(x_1)))) - 3.083"
+    },
+    {
+        "eq_string": "x_1 - cos(x_2 - sin(x_2) + cos(x_1))"
+    },
+    {
+        "eq_string": "exp(tan(tan(0.341*x_1 + 2.071*cos(tan(x_2))) + 0.826))"
+    },
+    {
+        "eq_string": "cos(1.088*tan(x_1) + tan(x_2 + sin(x_2)))"
+    },
+    {
+        "eq_string": "x_3 + sin(x_1 - 2.779) - cos(x_1 + x_2 + 2.255*x_3 + 0.0723820586759754) + 3.068"
+    },
+    {
+        "eq_string": "x_2 - x_3 + exp(cos(x_1)) + cos(x_2)"
+    },
+    {
+        "eq_string": "x_1 + 0.096*x_2 + x_4 + 2.1573138865799*exp(0.481*x_3) + sin(x_1)"
+    },
+    {
+        "eq_string": "-3.87179463012241*exp(x_2 + x_3 + exp(x_1)) + sin(x_1) + 1.26"
+    },
+    {
+        "eq_string": "sin(1.482*tan(x_2)) + 0.637*tan(0.269*x_1 + x_2 - 1.980916) - 2.881"
+    },
+    {
+        "eq_string": "x_1 + tan(cos(exp(x_2) + cos(x_2)))"
+    },
+    {
+        "eq_string": "sin(sin(cos(x_1 - sin(tan(x_2 + 0.744)))))"
+    },
+    {
+        "eq_string": "0.059*x_1 + 0.998*cos(x_3 + 4.929) - cos(cos(x_1 - x_2))"
+    },
+    {
+        "eq_string": "0.071*x_1 - x_3 + sin(4.18706495327986*exp(x_1 + sin(x_2))) - 5.921848"
+    },
+    {
+        "eq_string": "x_1 + exp(x_1) - sin(sin(x_1 - x_2))"
+    },
+    {
+        "eq_string": "2*x_1 + cos(0.088*sin(sin(cos(x_2))) - 0.149688) - 2.80876724611596"
+    },
+    {
+        "eq_string": "x_1 + 1.98*x_2 + 0.0132622183648642*exp(x_1) - tan(sin(x_2) - 8.063) - 7.58"
+    },
+    {
+        "eq_string": "-5.335*tan(-x_1 + x_2 + tan(x_1 + 0.0653498587730457*exp(x_2)) + 8.421)"
+    },
+    {
+        "eq_string": "x_3 + sin(x_1) - cos(x_2 + cos(x_1))"
+    },
+    {
+        "eq_string": "sin(x_2 + x_3 - cos(0.056*x_1) + 1.081*tan(x_1))"
+    },
+    {
+        "eq_string": "x_2 + 1.08934187034868*sin(x_1 + 0.25*pi) + tan(x_1)"
+    },
+    {
+        "eq_string": "x_1 + sin(cos(tan(sin(exp(x_1)))))"
+    },
+    {
+        "eq_string": "x_1 + 1.08934187034868*cos(5.909*x_1 + 0.25*pi) - 0.211*cos(0.515*x_2 + 1.320975) - 1.984244"
+    },
+    {
+        "eq_string": "-1.1701606918756*exp(exp(-x_2 + sin(x_2) + cos(x_1)))"
+    },
+    {
+        "eq_string": "cos(x_1 + tan(exp(exp(2*x_1))) + 5.436)"
+    },
+    {
+        "eq_string": "cos(tan(-6.022*x_1 + x_3 + tan(0.621*sin(x_2 + 9.858)) + 8.895))"
+    },
+    {
+        "eq_string": "cos(tan(x_2 + exp(x_1) + 5.897)) + 0.795*tan(x_1 - 2.012) + 6.121"
+    },
+    {
+        "eq_string": "tan(tan(sin(3.031*x_1) - cos(x_1 - 9.181)) + 2.047)"
+    },
+    {
+        "eq_string": "7.805*exp(cos(x_1 + x_2 - sin(x_1 + x_2)))"
+    },
+    {
+        "eq_string": "tan(tan(0.061*cos(x_1 + sin(x_1)))) - 1.031"
+    },
+    {
+        "eq_string": "sin(x_1) + 4.047*tan(x_1) - tan(tan(x_1)) + 4.784"
+    },
+    {
+        "eq_string": "tan(4.4336304834754*x_1 + 0.225*x_2 - cos(exp(1.924*x_3)))"
+    },
+    {
+        "eq_string": "exp(cos(x_1) - 0.061*tan(x_1 - x_2 + 0.471))"
+    },
+    {
+        "eq_string": "x_1 + sin(0.208*x_1) + cos(x_1 + cos(1.573*x_1))"
+    },
+    {
+        "eq_string": "tan(x_1 + exp(sin(x_2 + 2.302)) + cos(x_2))"
+    },
+    {
+        "eq_string": "exp(x_1 + tan(x_1 + x_2 - sin(x_2)))"
+    },
+    {
+        "eq_string": "x_1 + 0.058*x_2 - cos(exp(x_1 + cos(x_2)))"
+    },
+    {
+        "eq_string": "-x_1 + sin(x_1) - sin(x_3 - 3.534) - cos(x_2) - 4.433"
+    },
+    {
+        "eq_string": "1.342*x_1 - x_2 - exp(exp(x_1)) + sin(x_1)"
+    },
+    {
+        "eq_string": "x_1 - x_3 - x_4 + cos(x_1 + cos(x_2))"
+    },
+    {
+        "eq_string": "exp(-x_1 + sin(x_1) - sin(cos(x_2)))"
+    },
+    {
+        "eq_string": "x_1 + tan(sin(exp(tan(0.814*x_1))))"
+    },
+    {
+        "eq_string": "exp(0.0703739421316119*exp(x_2 + cos(tan(2.777*x_1)))) + 3.5"
+    },
+    {
+        "eq_string": "exp(x_2) + sin(2*x_1 + exp(x_1))"
+    },
+    {
+        "eq_string": "-x_1 + exp(x_2) + cos(x_1 - exp(x_2))"
+    },
+    {
+        "eq_string": "0.162*cos(x_1 + x_2 - cos(0.637*x_1) + tan(x_1 + 5.81) + 0.252)"
+    },
+    {
+        "eq_string": "7.309*cos(1.279*x_2 - cos(x_2 + exp(2*x_1)))"
+    },
+    {
+        "eq_string": "cos(x_1 + x_2 + exp(x_2 + tan(2.476*x_2)))"
+    },
+    {
+        "eq_string": "x_1 + 0.0805401065994986*exp(x_2) + sin(1.559*x_1) + sin(x_2) + 0.131"
+    },
+    {
+        "eq_string": "x_2 + x_3 + sin(tan(sin(0.995*x_1))) + 1.375"
+    },
+    {
+        "eq_string": "sin(x_1 + cos(-x_1 + 2*x_2 + x_3) - 8.496)"
+    },
+    {
+        "eq_string": "x_3 + tan(x_1 + x_2 + 0.183*x_3 + cos(x_1) - 0.655323)"
+    },
+    {
+        "eq_string": "4.987*x_1 - sin(x_1 - 1.36989783411104*exp(4.937*x_1 - 6.13493817078233*exp(x_1))) - 1.36989783411104"
+    },
+    {
+        "eq_string": "exp(4.202*cos(cos(cos(x_1 - x_2)))) - 5.784"
+    },
+    {
+        "eq_string": "x_3 + cos(2*x_2 + x_3 + sin(x_1) - 7.895)"
+    },
+    {
+        "eq_string": "-x_3 + tan(x_2 + exp(x_1) + tan(x_3 - 5.823)) - 0.661"
+    },
+    {
+        "eq_string": "0.062*x_1 + tan(x_1 - exp(exp(sin(x_2)))) + 0.012214"
+    },
+    {
+        "eq_string": "x_1 + cos(x_2 + x_3 + x_4 + tan(x_2))"
+    },
+    {
+        "eq_string": "x_3 + exp(x_1) + exp(-tan(x_1 - x_2))"
+    },
+    {
+        "eq_string": "exp(1.082*sin(tan(x_1 + tan(2*x_1) - 7.669)))"
+    },
+    {
+        "eq_string": "x_2 + exp(3.783*exp(x_3 - x_4)) + cos(x_1)"
+    },
+    {
+        "eq_string": "x_1 + x_2 + x_3 + 4.635*cos(x_4) + tan(x_4 + 4.376) - 2.841"
+    },
+    {
+        "eq_string": "0.181*cos(0.669*x_2 - tan(0.554*x_1) + tan(cos(x_3)) + 5.198)"
+    },
+    {
+        "eq_string": "tan(0.449*sin(x_1) + 1.025067) - tan(-x_1 + cos(0.428*x_1 - 2.722936) + 8.369)"
+    },
+    {
+        "eq_string": "x_1 - exp(cos(cos(x_1))) + tan(x_1)"
+    },
+    {
+        "eq_string": "sin(2.204*x_1 + x_2 - 7.455*x_3 + exp(cos(0.096*x_1)))"
+    },
+    {
+        "eq_string": "4.872*x_1 + tan(sin(x_1)) - tan(tan(x_2 + 7.308))"
+    },
+    {
+        "eq_string": "x_1 + x_2 - x_3 + tan(x_3 + x_4 + x_5)"
+    },
+    {
+        "eq_string": "sin(x_1 - 2.875*x_3 + sin(sin(tan(x_2))))"
+    },
+    {
+        "eq_string": "0.093*sin(x_2 + tan(4.76705159722568*exp(x_1 + 0.224*x_2))) + 0.764553"
+    },
+    {
+        "eq_string": "-x_1 + 4.41196137631276*exp(x_1 + exp(x_1 + exp(x_2)))"
+    },
+    {
+        "eq_string": "sin(x_1 + x_3 - exp(sin(2*x_2)) - 2.297)"
+    },
+    {
+        "eq_string": "0.07*x_1 + 6.9*x_2 + x_3 + sin(sin(tan(x_1)))"
+    },
+    {
+        "eq_string": "x_1 + tan(cos(x_3) + cos(x_1 + x_2))"
+    },
+    {
+        "eq_string": "sin(0.401*sin(x_1 + x_2 + exp(x_1 - x_2) - 7.782)) + 2.943"
+    },
+    {
+        "eq_string": "x_1 - exp(sin(x_2) - cos(x_2 - x_3))"
+    },
+    {
+        "eq_string": "x_1 + sin(x_2 + cos(x_2) + tan(x_2))"
+    },
+    {
+        "eq_string": "-x_2 + x_3 + tan(cos(x_2) + tan(x_1))"
+    },
+    {
+        "eq_string": "-x_2 - x_3 + cos(exp(exp(x_1)))"
+    },
+    {
+        "eq_string": "exp(x_1 - tan(x_1 + x_2 - sin(x_1)))"
+    },
+    {
+        "eq_string": "x_1 + exp(sin(x_2 - cos(x_3)))"
+    },
+    {
+        "eq_string": "x_2 - x_3 + exp(x_1 - exp(cos(x_1))) + 2.88"
+    },
+    {
+        "eq_string": "tan(x_1 + x_2 + tan(tan(x_3)) + 3.499)"
+    },
+    {
+        "eq_string": "x_1 + exp(x_2 + 0.775*x_3) + sin(sin(x_1))"
+    },
+    {
+        "eq_string": "x_1 + x_2 + cos(sin(x_1 + x_3 - x_4))"
+    },
+    {
+        "eq_string": "tan(x_1 + sin(sin(exp(x_2))))"
+    },
+    {
+        "eq_string": "x_2 + x_3 - sin(x_1 - x_2) + cos(x_1)"
+    },
+    {
+        "eq_string": "x_1 - 0.355*x_3 - x_4 - sin(x_3 + exp(x_2)) - 0.742"
+    },
+    {
+        "eq_string": "x_1 - sin(sin(2*x_2 + sin(x_2 + 2.449)) + 2.014)"
+    },
+    {
+        "eq_string": "x_3 + sin(x_2) + cos(sin(cos(x_1)))"
+    },
+    {
+        "eq_string": "x_1 - x_2 - cos(x_2 + exp(tan(x_1)))"
+    },
+    {
+        "eq_string": "x_1 + exp(cos(tan(x_2 + exp(x_2))))"
+    },
+    {
+        "eq_string": "sin(tan(x_1 + x_3 + exp(x_1 - x_2) - 3.042))"
+    },
+    {
+        "eq_string": "exp(x_2 + exp(x_1)) + tan(tan(x_2 - 4.808))"
+    },
+    {
+        "eq_string": "sin(sin(x_1 + exp(2*x_1 + x_2)))"
+    },
+    {
+        "eq_string": "sin(x_1 + cos(x_2 + cos(cos(x_1)))) - 7.092"
+    },
+    {
+        "eq_string": "x_1 + tan(exp(x_2) + tan(x_1 + x_2 - 3.271))"
+    },
+    {
+        "eq_string": "tan(cos(sin(exp(2.037*x_1 - x_2 - x_3))))"
+    },
+    {
+        "eq_string": "x_1 + sin(exp(sin(x_1)) - cos(x_1))"
+    },
+    {
+        "eq_string": "-sin(exp(tan(2*x_2)) - cos(x_1) + 5.602)"
+    },
+    {
+        "eq_string": "-x_1 + x_2 + sin(x_1 - sin(exp(x_1)))"
+    },
+    {
+        "eq_string": "2.793*x_4 + cos(x_2 + x_3 + x_4 + tan(x_1))"
+    },
+    {
+        "eq_string": "exp(exp(2*x_1) - exp(x_2 + x_3))"
+    },
+    {
+        "eq_string": "exp(tan(sin(x_1))) + 0.068*sin(2*x_1 + 9.08)"
+    },
+    {
+        "eq_string": "cos(x_1 - sin(x_1 + x_2) + tan(x_1) + 0.483)"
+    },
+    {
+        "eq_string": "0.058601206141004*exp(x_1 + x_2 + x_3 + x_4 + cos(x_3))"
+    },
+    {
+        "eq_string": "x_4 + x_5 + sin(x_1 + x_2) + tan(x_3)"
+    },
+    {
+        "eq_string": "sin(x_1 + x_2 - x_3 - exp(cos(x_3)))"
+    },
+    {
+        "eq_string": "cos(tan(x_1 - x_3 + x_4 + tan(x_2)))"
+    },
+    {
+        "eq_string": "x_3 + cos(-x_1 + 0.051*cos(x_1) + 0.249*cos(x_2) + 0.242505) + 4.115"
+    },
+    {
+        "eq_string": "x_1 - x_2 + cos(x_1 - 7.653) + cos(tan(x_2 + 4.409)) - 8.57"
+    },
+    {
+        "eq_string": "x_1 - 3.53067354957215*exp(x_1 - x_2 - sin(sin(x_2))) - 10.126"
+    },
+    {
+        "eq_string": "x_3 + tan(exp(x_1 - cos(x_2)))"
+    },
+    {
+        "eq_string": "x_1 + x_2 + x_3 + x_4 + exp(x_2 - x_3)"
+    },
+    {
+        "eq_string": "-x_3 + tan(x_1 + sin(exp(sin(x_2))) + 6.035)"
+    },
+    {
+        "eq_string": "exp(x_1) + cos(sin(4.317*x_1 - x_2))"
+    },
+    {
+        "eq_string": "3.407*x_1 + exp(sin(cos(x_2 - x_3)))"
+    },
+    {
+        "eq_string": "sin(x_1) + tan(cos(tan(x_2) - 9.339))"
+    },
+    {
+        "eq_string": "x_1 - x_2 + sin(cos(sin(cos(x_2)))) - 8.189"
+    },
+    {
+        "eq_string": "-2.47669787807836*exp(-x_3 + 0.57*cos(x_2 - tan(x_1)))"
+    },
+    {
+        "eq_string": "cos(x_1 + exp(exp(x_1)) + 6.139*cos(0.115*x_2 - 0.15801) - 0.339)"
+    },
+    {
+        "eq_string": "x_3 + exp(cos(x_2)) + cos(x_1 + x_2)"
+    },
+    {
+        "eq_string": "exp(x_2 + sin(x_1 - x_2) + cos(1.996*x_1))"
+    },
+    {
+        "eq_string": "x_1 + 0.0587453353368195*exp(x_1) + exp(x_1 + tan(x_2)) + 4.458"
+    },
+    {
+        "eq_string": "0.247*cos(x_1 + cos(tan(x_2) - 8.22)) + 1.119*tan(x_3 - 5.129)"
+    },
+    {
+        "eq_string": "2*x_1 + x_2 + 3.19951744500975*exp(x_3 + cos(x_3))"
+    },
+    {
+        "eq_string": "x_2 - x_5 + exp(x_1) + cos(x_3 - x_4)"
+    },
+    {
+        "eq_string": "x_1 + tan(tan(x_1 + x_2 - cos(x_1)))"
+    },
+    {
+        "eq_string": "x_2 + sin(x_2 + cos(x_3)) + tan(x_1)"
+    },
+    {
+        "eq_string": "cos(x_2 + exp(x_1 + x_3 - tan(x_2)))"
+    },
+    {
+        "eq_string": "0.075*x_1 + sin(0.551*x_2) + sin(exp(1.484*x_1 - x_2))"
+    },
+    {
+        "eq_string": "exp(-x_2 - x_3 + cos(x_1 - cos(x_2)))"
+    }
+]

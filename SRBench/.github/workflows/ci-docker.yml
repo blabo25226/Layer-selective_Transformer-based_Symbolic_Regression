@@ -1,0 +1,169 @@
+name: Docker CI
+
+on:
+  push:
+    branches:
+      - docker-compose
+      - master
+    paths:
+      - 'algorithms/**'
+      - 'experiment/methods/**'
+      - 'alg-Dockerfile'
+      - 'baseDockerfile'
+      - 'base_environment*.yml'
+      - 'scripts/**'
+      - 'entry.sh'
+      - 'configure.sh'
+      - '.github/workflows/**'
+  pull_request:
+    branches:
+      - docker-compose
+      - master
+    paths:
+      - 'algorithms/**'
+      - 'experiment/methods/**'
+      - 'alg-Dockerfile'
+      - 'baseDockerfile'
+      - 'base_environment*.yml'
+      - 'scripts/**'
+      - 'entry.sh'
+      - 'configure.sh'
+      - '.github/workflows/**'
+
+jobs:
+  list-algs:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        run: echo "matrix=$(ls -1 algorithms/ | jq -R -s -c 'split("\n")[:-1]')" >> "$GITHUB_OUTPUT"
+
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed-algs: ${{ steps.check.outputs.changed-algs }}
+      unchanged-algs: ${{ steps.check.outputs.unchanged-algs }}
+      changed-experiments: ${{ steps.check.outputs.changed-experiments }}
+      unchanged-experiments: ${{ steps.check.outputs.unchanged-experiments }}
+      changes-detected: ${{ steps.check.outputs.changes-detected }}
+      rebuild-all: ${{ steps.check.outputs.rebuild-all }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: check
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+          fi
+
+          if [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            BASE_SHA=$(git hash-object -t tree /dev/null)
+          fi
+
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+
+          CHANGED_ALGS=""
+          CHANGED_EXPERIMENTS=""
+          if [[ -n "$CHANGED_FILES" ]]; then
+            CHANGED_ALGS=$(printf '%s\n' "$CHANGED_FILES" | awk -F/ '/^algorithms\// {print $2}' | sort -u)
+            CHANGED_EXPERIMENTS=$(printf '%s\n' "$CHANGED_FILES" | awk -F/ '/^experiment\/methods\// {print $2}' | sort -u)
+          fi
+
+          REBUILD_ALL=false
+          if printf '%s\n' "$CHANGED_FILES" | grep -Eq '^(alg-Dockerfile|baseDockerfile|base_environment.*\.yml|scripts/|entry\.sh|configure\.sh|\.github/workflows/)'; then
+            REBUILD_ALL=true
+          fi
+
+          if [[ "$REBUILD_ALL" == "true" ]]; then
+            CHANGED_ALGS=$(ls -1 algorithms/ | sort)
+          fi
+
+          CHANGED_ALGS_CSV=$(printf '%s\n' "$CHANGED_ALGS" | paste -sd, -)
+          CHANGED_EXPERIMENTS_CSV=$(printf '%s\n' "$CHANGED_EXPERIMENTS" | paste -sd, -)
+
+          ALL_ALGS=$(ls -1 algorithms/ | sort)
+          UNCHANGED_ALGS=$(comm -23 <(printf '%s\n' "$ALL_ALGS") <(printf '%s\n' "$CHANGED_ALGS"))
+          ALL_EXPERIMENTS=$(ls -1 experiment/methods/ | sort)
+          UNCHANGED_EXPERIMENTS=$(comm -23 <(printf '%s\n' "$ALL_EXPERIMENTS") <(printf '%s\n' "$CHANGED_EXPERIMENTS"))
+
+          echo "changed-algs=$CHANGED_ALGS_CSV" >> "$GITHUB_OUTPUT"
+          echo "unchanged-algs=$(printf '%s\n' "$UNCHANGED_ALGS" | paste -sd, -)" >> "$GITHUB_OUTPUT"
+          echo "changed-experiments=$CHANGED_EXPERIMENTS_CSV" >> "$GITHUB_OUTPUT"
+          echo "unchanged-experiments=$(printf '%s\n' "$UNCHANGED_EXPERIMENTS" | paste -sd, -)" >> "$GITHUB_OUTPUT"
+          echo "rebuild-all=$REBUILD_ALL" >> "$GITHUB_OUTPUT"
+
+          if [[ "$REBUILD_ALL" == "true" ]]; then
+            echo "changes-detected=true" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$CHANGED_ALGS$CHANGED_EXPERIMENTS" ]]; then
+            echo "changes-detected=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changes-detected=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  print-changes:
+    runs-on: ubuntu-latest
+    needs: check-changes
+    outputs:
+      changed-algorithms: ${{ steps.print.outputs.changed-algorithms }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: print
+        run: |
+          echo "Changed algorithms:"
+          echo "${{ needs.check-changes.outputs.changed-algs }}"
+          echo ""
+          echo "Changed experiments:"
+          echo "${{ needs.check-changes.outputs.changed-experiments }}"
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    needs: 
+      - check-changes
+      - print-changes
+      - list-algs
+    defaults:
+      run:
+        shell: bash -l {0}
+    strategy:
+      matrix:
+        alg: ${{ fromJson(needs.list-algs.outputs.matrix) }}
+      fail-fast: false
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check if algorithm has changed
+        id: check_algorithm
+        run: |
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+      - name: Print should_run status
+        run: |
+          echo "Should run: ${{ steps.check_algorithm.outputs.should_run }}"
+      - name: Build and Test Algorithm
+        if: steps.check_algorithm.outputs.should_run == 'true'
+        run: |
+          # Log in to Docker Hub
+          # docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_KEY }}
+
+          # Make docker-compose.yml file
+          bash scripts/make_docker_compose_file.sh
+
+          # Pull docker image
+          # docker compose pull ${{ matrix.alg }}
+
+          # Build docker image
+          # docker compose build ${{ matrix.alg }}
+
+          # Test docker image
+          docker compose run --build ${{ matrix.alg }} bash test.sh
+
+          # Push docker image
+          # docker compose push ${{ matrix.alg }}

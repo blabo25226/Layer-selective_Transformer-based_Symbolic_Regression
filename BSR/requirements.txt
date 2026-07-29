@@ -1,0 +1,15 @@
+numpy
+torch
+pandas
+scikit-learn
+matplotlib
+tqdm
+pytest
+black
+isort
+flake8
+pytorch-lightning
+boolean.py
+timeout_decorator
+wandb
+protobuf

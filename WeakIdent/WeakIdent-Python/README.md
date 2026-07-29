@@ -1,0 +1,131 @@
+# WeakIdent-Python
+
+Script for **identifying differential equations** using WeakIdent.
+
+This repo provides implementation details of WeakIdent using Python. 
+
+Copyright 2022, All Rights Reserved
+
+**Code author:  Mengyi Tang Rajchel**
+
+For Paper, "[:link:WeakIdent: Weak formulation for Identifying Differential Equation using Narrow-fit and Trimming](https://doi.org/10.1016/j.jcp.2023.112069)" by Mengyi Tang, Wenjing Liao, Rachel Kuske and Sung Ha Kang.
+
+:blush: If you found WeakIdent useful in your research, please consider cite us:
+
+```
+@article{tang2023weakident,
+  title={WeakIdent: Weak formulation for Identifying Differential Equation using Narrow-fit and Trimming},
+  author={Tang, Mengyi and Liao, Wenjing and Kuske, Rachel and Kang, Sung Ha},
+  journal={Journal of Computational Physics},
+  pages={112069},
+  year={2023},
+  publisher={Elsevier}
+}
+```
+
+## What  does WeakIdent do?
+WeakIdent is a general and robust framework to recover differential equations using a weak formulation, for both ordinary and partial differential equations (ODEs and PDEs). 
+Noisy time series data are taken in with spacing as input and output a governing equation for this data.
+
+
+
+
+## Environment set-up
+
+### Required packages
+`sys, yaml, argparse, time, typing, pandas, tabular, numpy, numpy_index, Scipy`
+
+### Set-up
+[Option 1] If you do not have `conda` installed, you can use `pip install` to install the packages listed above.
+
+[Option 2] (1) run `conda env create -f environment.yml` to create the environment. (2) run `conda activate test_env1` to activate the environment.
+
+
+## Datasets
+Sample datasets from various type of equations including true coefficients can be found in the folder `dataset-Python`. For each dataset, there exists a 
+configuration file in `configs` that specifies the input argument to run WeakIdent. The following table provides the name of equations of each dataset:
+
+| config file  index       | Equation name      | 
+|:-------------:|-------------|
+|1     |  Transport Equation |  
+| 2     | Reaction Diffusion Equation    | 
+| 3 | Anisotropic Porous Medium (PM) Equation    |
+| 4 | Heat Equation | 
+| 5 | Korteweg-de Vires (KdV) Equation | 
+| 6 | Kuramoto-Sivashinsky (KS) Equation | 
+| 7 | Nonlinear Schrodinger (NLS) | 
+| 8 | 2D Linear System | 
+| 9 | Nonlinear System (Van der Pol) | 
+| 10 | Nonlinear System (Duffing) | 
+| 11 | Noninear System (Lotka-Volterra) | 
+|12| Nonlinear System (Lorenz) | 
+|13| Noninear System 2D (Lotka-Volterra) |
+
+We refer details of each dataset to the experimental result section in our paper *WeakIdent: Weak formulation for Identifying Differential Equation using Narrow-fit and Trimming*
+
+### Remark: 
+The dataset for reaction diffusion type equation and Nonlinear Lotka-Volterro equation are sligher larger (100-200 M). They are not provided in `dataset-Python`. Instead, I provided auto-simulation for these two dataset when running WeakIdent on these equations. 
+
+- To run WeakIdent on reaction diffusion type equation, run `python main.py --config configs/config_2.yaml`. The auto simulation takes 1-3 mintues.
+
+- To run WeakIdent on Nonlinear System 2D (Lotka-Volterra), please run `python main.py --config configs/config_13.yaml`. The auto simulation takes 1 second.
+
+- To run other examples, WeakIdent directly takes provided datasets as input. Running time various between 1 - 30 seconds. 
+
+## Run WeakIdent on provided datasets
+There are 13 datasets provided in `dataset-Python`. To run WeakIdent on each indivial dataset, 
+run `python main.py --config configs/config_$n$ file name$.yaml` to identify differential equation using a pre-simulated dataset specified in `configs/config_$n$.yaml`. 
+### An example of running WeakIdent on Transport Equation with diffusion
+Run `python main.py --config configs/config_1.yaml` to see the output:
+
+```
+Start loading arguments and dataset transportDiff.npy for Transport Equation
+Start building feature matrix W:
+[===========================================] 100.0% 
+Start building scale matrix S:
+[===========================================] 100.0% 
+The number of rows in the highly dynamic region is  845
+
+ Start finding support: 
+[=========] 100.0% 
+WeakIdent finished support trimming and narrow-fit for variable no.1 . A support is found this variable.
+
+ ------------- coefficient vector overview ------noise-signal-ratio : 0.5  -------
++----+----------------+------------+------------+
+|    | feature        |   true u_t |   pred u_t |
++====+================+============+============+
+|  0 | 1              |       0    |  0         |
++----+----------------+------------+------------+
+|  1 | u              |       0    |  0         |
++----+----------------+------------+------------+
+|  2 | u_{x}          |      -1    | -1.00707   |
++----+----------------+------------+------------+
+|  3 | u_{xx}         |       0.05 |  0.0526434 |
++----+----------------+------------+------------+
+                    ......
++----+----------------+------------+------------+
+| 42 | (u^6)_{xxxxxx} |       0    |  0         |
++----+----------------+------------+------------+
+
+ ------------- equation overview ------noise-signal-ratio : 0.5  -------------------
++----+---------------------------------+------------------------------------+
+|    | True equation                   | Predicted equation                 |
++====+=================================+====================================+
+|  0 | u_t = - 1.0 u_{x} + 0.05 u_{xx} | u_t = - 1.007 u_{x} + 0.053 u_{xx} |
++----+---------------------------------+------------------------------------+
+
+ ------------------------------ CPU time: 0.7 seconds ------------------------------
+
+ Identification error for Transport Equation from WeakIdent: 
++----+-----------+----------------+-------------+---------+---------+
+|    |     $e_2$ |   $e_{\infty}$ |   $e_{res}$ |   $tpr$ |   $ppv$ |
++====+===========+================+=============+=========+=========+
+|  0 | 0.0075372 |      0.0528683 |    0.417006 |       1 |       1 |
++----+-----------+----------------+-------------+---------+---------+
+```
+
+## More sample output for each dataset
+We provide sample output for each equation(dataset) in  the folder `output`.
+
+## Credit/note
+Build feature matrix through convolution (using fft), this part of the code is modified from `get_lib_columns()` (originally Matlab version) from [WeakSindyPde](https://github.com/dm973/WSINDy_PDE).

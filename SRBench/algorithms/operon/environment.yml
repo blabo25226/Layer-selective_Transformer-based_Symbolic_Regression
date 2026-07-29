@@ -1,0 +1,10 @@
+name: srbench-operon
+channels:
+    - conda-forge
+    - anaconda
+dependencies:
+    - numpy==1.26.4
+    - optuna
+    - pip
+    - pip:
+        - pyoperon==0.5.0.dev1

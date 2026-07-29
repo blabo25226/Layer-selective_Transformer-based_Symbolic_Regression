@@ -1,0 +1,15 @@
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - scikit-learn 
+  - pandas 
+  - numpy
+  - pyarrow
+  - pytest
+  - sympy
+  - pyyaml
+  - pip 
+  - pip:
+    - git+https://github.com/EpistasisLab/pmlb # mislabeled datasets fixed
+    - pytest-order
