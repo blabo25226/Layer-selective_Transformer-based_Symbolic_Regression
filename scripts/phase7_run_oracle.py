@@ -29,6 +29,7 @@ from data.regulator_selection import (  # noqa: E402
     oracle_regulators,
 )
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
+from evaluation.aggregation import aggregate_prediction_scores, true_variables  # noqa: E402
 from evaluation.grn_metrics import (  # noqa: E402
     edge_recovery,
     predicted_edges_from_selections,
@@ -138,7 +139,6 @@ def eval_sr(model, params_fit, problems) -> Dict[str, Any]:
     import warnings
 
     rows = []
-    nmses, r2s, syms, vfs = [], [], [], []
     for ds in problems:
         # Prefer concrete numeric expr for symbolic scoring when possible
         true_expr = ds.spec.target_expr
@@ -159,24 +159,12 @@ def eval_sr(model, params_fit, problems) -> Dict[str, Any]:
             expr = ""
         y_hat = eval_expression(expr, ds.X, ds.spec.variable_names) if expr else None
         sc = score_prediction(
-            ds.y, y_hat, expr, ds.spec.variable_names, true_expr=true_expr
+            ds.y, y_hat, expr, true_variables(true_expr, ds.spec.variable_names),
+            true_expr=true_expr
         )
         rows.append({"eq_id": ds.spec.eq_id, "pred": expr, "true": true_expr, **sc})
-        if np.isfinite(sc["nmse"]):
-            nmses.append(sc["nmse"])
-        if np.isfinite(sc["r2"]):
-            r2s.append(sc["r2"])
-        syms.append(sc.get("sym_recovery", 0.0))
-        vfs.append(sc.get("var_f1", 0.0))
     return {
-        "aggregate": {
-            "n_eval": float(len(problems)),
-            "n_valid": float(len(nmses)),
-            "nmse": float(np.median(nmses)) if nmses else float("inf"),
-            "r2": float(np.median(r2s)) if r2s else float("-inf"),
-            "sym_rate": float(np.mean(syms)) if syms else 0.0,
-            "var_f1": float(np.mean(vfs)) if vfs else 0.0,
-        },
+        "aggregate": aggregate_prediction_scores(rows),
         "per_problem": rows,
     }
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -11,9 +12,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from data.synthetic_grn import build_phase1_suite, save_suite  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
-OUT_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
-REPORT = ROOT / "results" / "phase_results" / "phase1_report.md"
+RUN_DIR = os.environ.get("LTSR_RUN_DIR")
+OUT_DIR = Path(
+    os.environ.get(
+        "LTSR_PHASE1_DATA",
+        str(
+            Path(RUN_DIR) / "input_data" / "phase1_v1"
+            if RUN_DIR
+            else ROOT / "results" / "synthetic" / "phase1_v1"
+        ),
+    )
+)
+_, REPORT = phase_output_paths(ROOT, "phase1", "phase1_report.md")
 
 
 def main() -> int:

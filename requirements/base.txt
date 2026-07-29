@@ -8,7 +8,6 @@
 setuptools>=80,<81
 numpy>=2.0,<3
 sympy==1.13.1
-torch==2.5.1
 pytorch-lightning==1.9.5
 hydra-core==1.0.0
 omegaconf==2.1.2

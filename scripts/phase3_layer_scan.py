@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import time
@@ -27,13 +28,29 @@ from evaluation.equation_metrics import eval_expression, score_prediction  # noq
 from models.layer_selector import get_layer_registry  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
 from training.single_layer import clone_model, train_selective  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
-DATA_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
-WEIGHTS = ROOT / "NSRS" / "weights" / "10M.ckpt"
-CONFIG = ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml"
-EQ_SETTING = ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json"
-OUT_DIR = ROOT / "results" / "phase_results" / "phase3"
-REPORT = ROOT / "results" / "phase_results" / "phase3_report.md"
+DATA_DIR = Path(
+    os.environ.get(
+        "LTSR_PHASE1_DATA",
+        str(ROOT / "results" / "synthetic" / "phase1_v1"),
+    )
+)
+WEIGHTS = Path(
+    os.environ.get("LTSR_WEIGHTS", str(ROOT / "NSRS" / "weights" / "10M.ckpt"))
+)
+CONFIG = Path(
+    os.environ.get(
+        "LTSR_CONFIG", str(ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml")
+    )
+)
+EQ_SETTING = Path(
+    os.environ.get(
+        "LTSR_EQ_SETTING",
+        str(ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json"),
+    )
+)
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase3", "phase3_report.md")
 
 
 def build_conditions(model) -> Dict[str, Optional[List[str]]]:

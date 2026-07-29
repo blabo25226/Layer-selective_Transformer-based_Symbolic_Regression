@@ -18,6 +18,8 @@ from training.selective_layers import (  # noqa: E402
     middle_k,
     random_k,
     ranking_from_contributions,
+    require_live_phase4_ranking,
+    usable_ranking_metrics,
     top_k,
 )
 
@@ -57,6 +59,16 @@ def test_random_excludes_top(tmp_path=None):
     assert not (set(r) & top3)
 
 
+def test_multiple_random_layer_sets_are_named_and_exclude_top():
+    c = build_phase5_conditions(
+        PHASE4_ACCURACY_RANKING, k=3, random_seed=0, random_seeds=[0, 1, 2]
+    )
+    top3 = set(top_k(PHASE4_ACCURACY_RANKING, 3))
+    for name in ("random_3", "random_3_seed1", "random_3_seed2"):
+        assert name in c
+        assert not (set(c[name]) & top3)
+
+
 def test_ranking_from_contributions():
     # Higher C = better. accuracy = mean rank over val_ce+nmse+r2.
     tables = {
@@ -89,3 +101,36 @@ def test_load_phase4_ranking_fallback_and_file(tmp_path):
     )
     ranking, source = load_phase4_ranking(p, "accuracy")
     assert source == "phase4" and ranking[0] == "encoder_2"
+
+
+def test_load_multiseed_aggregate_ranking(tmp_path):
+    p = tmp_path / "contrib_aggregate.json"
+    p.write_text(json.dumps({
+        "val_ce": {"decoder_4": {"mean": 0.9}, "encoder_2": {"mean": 0.2}},
+        "nmse": {"decoder_4": {"mean": 0.1}, "encoder_2": {"mean": 0.8}},
+        "r2": {"decoder_4": {"mean": 0.1}, "encoder_2": {"mean": 0.8}},
+    }), encoding="utf-8")
+    ranking, source = load_phase4_ranking(p, "accuracy")
+    assert source == "phase4_multiseed"
+    assert ranking[0] == "encoder_2"
+
+
+def test_undefined_metric_is_excluded_from_accuracy_ranking():
+    tables = {
+        "val_ce": {"decoder_4": 0.9, "encoder_2": 0.2},
+        "penalized_nmse": {"decoder_4": None, "encoder_2": None},
+        "penalized_r2": {"decoder_4": None, "encoder_2": None},
+    }
+    assert usable_ranking_metrics(tables, "accuracy") == ["val_ce"]
+    assert ranking_from_contributions(tables, "accuracy")[0] == "decoder_4"
+
+
+def test_phase8_gpu_mode_rejects_missing_live_ranking(tmp_path):
+    missing = tmp_path / "missing.json"
+    try:
+        require_live_phase4_ranking("fallback", missing)
+    except RuntimeError as exc:
+        assert "Refusing to use the frozen CPU fallback" in str(exc)
+        assert str(missing) in str(exc)
+    else:
+        raise AssertionError("fallback ranking was accepted")

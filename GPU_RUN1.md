@@ -1,0 +1,995 @@
+# GPU本実験の実行手順（リモートデスクトップ接続）
+
+この手順は、WindowsのGPU PCへリモートデスクトップ接続し、VS CodeとAI支援を使って本実験を行う場合を想定する。
+計算自体は **WSL2上のUbuntu + bash** で実行する。PowerShellやWindows版Pythonから
+`scripts/run_gpu_pipeline.sh`を直接実行しない。
+
+`scripts/run_gpu_pipeline.sh`は **Phase 4 → 5 → 6 → 7 → 8** を実行できる。
+Phase 7は`DREAM4=1`のときだけ実行し、Size10/100の全networkを複数seedで評価する。
+
+GPU本実験の出力は`results/runs/<run-id>/`へ保存し、既存のCPU pilotを上書きしない。
+各runでは合成入力データも`results/runs/<run-id>/input_data/`へ保存する。
+
+## 1. リモートGPU PCの準備
+
+GPU PC側で次を準備する。
+
+- NVIDIAドライバと、WSL2からGPUを利用できるWindows環境
+- WSL2のUbuntu 22.04または同等環境
+- Windows版VS Codeと`WSL`拡張
+- WSL内のGit、Miniconda、`tmux`、`wget`、`unzip`
+- 内蔵SSD上の十分な空き容量
+
+Windowsの「電源とバッテリー」で、AC接続中にスリープへ入らない設定にする。長時間run中は、
+Windows Updateによる自動再起動の時間帯も確認する。リモートデスクトップを閉じるときは **切断** を選び、
+サインアウト、再起動、シャットダウンは行わない。切断後も`tmux`内のプロセスは継続するが、PCのスリープや再起動では停止する。
+
+WSLターミナルで最初に確認する。
+
+```bash
+nvidia-smi
+df -h .
+```
+
+VS CodeはWSL側のリポジトリから開く。
+
+```bash
+code .
+```
+
+VS Code左下が`WSL: Ubuntu`等になっており、統合ターミナルの`uname -a`がLinuxを示すことを確認する。
+
+## 2. cloneと実行対象commitの固定
+
+現在、GPU本実験用の修正は`gpu-scale-prep`ブランチにある。`main`が同じ内容だと仮定せず、
+実行時点でユーザーが指定したブランチまたはcommitを明示的にcheckoutする。
+
+```bash
+git clone --branch gpu-scale-prep --single-branch \
+  https://github.com/blabo25226/Layer-selective_Transformer-based_Symbolic_Regression.git LTSR
+cd LTSR
+git status --short
+git branch --show-current
+git log -1 --oneline
+```
+
+`git status --short`が空であることを確認する。実験開始後に`git pull`してコードを入れ替えない。
+別PCで作った未pushの変更やcheckpoint、`data/`、`results/runs/`はcloneでは復元されない。
+
+## 3. Python環境
+
+Python 3.10を使う。NeSymReSが使用するHydra 1.0はPython 3.12と互換性がない。
+
+```bash
+conda create -n ltsr-gpu python=3.10 -y
+conda activate ltsr-gpu
+python -m pip install --upgrade pip
+pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements/gpu.txt
+pip install -e NSRS/src
+pip install pytest pysr
+```
+
+`requirements/dev.txt`はここでは使わない。`dev.txt`は`cpu.txt`経由で`torch==2.5.1`のCPU wheelを要求し、
+直前に入れたCUDAビルドを上書きするためである。テスト実行に必要なのは`pytest`だけなので個別に入れる。
+
+PyTorchを入れた後に次を確認する。
+
+```bash
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+```
+
+`torch.cuda.is_available()`が`False`なら本実験を始めない。`nvidia-smi`は動くがPyTorchから見えない場合は、
+WSL対応NVIDIAドライバ、インストールしたPyTorchのCUDA build、WSL再起動の要否を確認する。
+
+## 4. cloneに含まれないファイルを復元する
+
+`.gitignore`により、次はclone先に存在しない。
+
+| 対象 | 必要なPhase | 復元方法 |
+|---|---|---|
+| `NSRS/weights/*.ckpt` | Phase 4–8 | Hugging Faceから取得 |
+| `data/dream4/` | Phase 7のみ | GNW公式archiveを取得・展開 |
+| `data/human/gse112372_lps/` | Phase 8 | 実装がNCBI GEOから自動取得 |
+| `results/runs/` | 新規run | 実行時に自動生成 |
+| ローカルだけの外部repo群 | 今回のpipelineでは不要 | cloneしない |
+
+`NSRS/jupyter/100M/config.yaml`と`eq_setting.json`、TPSRのMCTSコードはGit管理されている。
+Phase 6はNeSymReS backbone上でTPSR探索を行うため、旧Phase 0で使ったTPSR E2E checkpointは不要である。
+
+### 4.1 NeSymReS checkpoint（必須）
+
+```bash
+mkdir -p NSRS/weights
+wget -O NSRS/weights/100M.ckpt \
+  https://huggingface.co/TommasoBendinelli/NeuralSymbolicRegressionThatScales/resolve/main/100M.ckpt
+sha256sum NSRS/weights/100M.ckpt
+ls -lh NSRS/weights/100M.ckpt
+```
+
+ダウンロードが途中で切れた場合は、サイズだけで成功と判断せず再取得する。pipelineのmanifestにはcheckpointの
+SHA256が記録される。checkpoint、config、eq_settingは同じモデル構成の組を指定し、ファイル名だけから互換性を仮定しない。
+
+```bash
+export LTSR_WEIGHTS="$PWD/NSRS/weights/100M.ckpt"
+export LTSR_CONFIG="$PWD/NSRS/jupyter/100M/config.yaml"
+export LTSR_EQ_SETTING="$PWD/NSRS/jupyter/100M/eq_setting.json"
+python scripts/preflight_gpu.py \
+  --weights "$LTSR_WEIGHTS" --config "$LTSR_CONFIG" --eq-setting "$LTSR_EQ_SETTING"
+```
+
+これらの`export`はrunを起動する`tmux`内でも行う。
+
+### 4.2 GSE112372（Phase 8、pipeline内で使用）
+
+Phase 8は、ファイルがなければNCBI GEOからTPM表とmetadataを自動取得する。ただし本実験では **run開始前に必ず取得しておく**。
+manifestの`data_fingerprints`はrun開始時点で計算されるため、Phase 8の自動取得に任せるとそのrunのヒトデータのSHA256が
+`exists: false`として記録され、再現性証跡が残らない。長時間runの途中で通信失敗しない利点もある。
+
+```bash
+PYTHONPATH=src python -c "from pathlib import Path; from data.human import prepare_gse112372; p=prepare_gse112372(Path('data/human/gse112372_lps')); print(p.source, sorted(p.X_donors))"
+find data/human/gse112372_lps -maxdepth 2 -type f -print
+```
+
+取得元はNCBI GEO accession `GSE112372`である。再取得が必要な場合だけPhase 8へ`--force-download`を渡す。
+pipeline標準実行では既存ファイルを再利用する。
+
+### 4.3 DREAM4（Phase 7を行う場合のみ）
+
+GNW公式ページの`DREAM4 in silico challenge.zip`には、Size 10/100のtraining data、gold standard、
+追加情報が含まれる。作業用一時ディレクトリへ展開し、`data/dream4/Size 10`と`Size 100`になるよう配置する。
+
+```bash
+DREAM4_TMP=$(mktemp -d)
+wget -O "$DREAM4_TMP/dream4.zip" \
+  "https://gnw.sourceforge.net/resources/DREAM4%20in%20silico%20challenge.zip"
+sha256sum "$DREAM4_TMP/dream4.zip"
+unzip -q "$DREAM4_TMP/dream4.zip" -d "$DREAM4_TMP/extracted"
+DREAM4_SIZE10=$(find "$DREAM4_TMP/extracted" -type d -name "Size 10" -print -quit)
+test -n "$DREAM4_SIZE10"
+mkdir -p data/dream4
+cp -a "$(dirname "$DREAM4_SIZE10")/." data/dream4/
+test -f "data/dream4/Size 10/DREAM4 training data/insilico_size10_1/insilico_size10_1_timeseries.tsv"
+test -f "data/dream4/Size 100/DREAM4 training data/insilico_size100_1/insilico_size100_1_timeseries.tsv"
+test -f "data/dream4/Size 10/DREAM4 gold standards/insilico_size10_1_goldstandard.tsv"
+test -f "data/dream4/Size 100/DREAM4 gold standards/insilico_size100_1_goldstandard.tsv"
+```
+
+gold standardはregulator selectionのedge F1に必須であり、training dataだけでは
+Phase 7が動かないため、上の4つすべてを確認する。`_goldstandard_signed.tsv`は任意で、
+存在すれば制御の符号が利用される。
+
+`data/`は`.gitignore`済みなので、`data/dream4/`が誤ってGitへ入ることはない。
+archiveのSHA256、取得日、取得元URLをPhase 7のrunメモへ残す。上記一時ディレクトリは確認後に削除してよい。
+
+## 5. CPU側の事前検証
+
+```bash
+python -m compileall -q src scripts tests
+python -m pytest -q
+bash -n scripts/run_gpu_pipeline.sh
+```
+
+すべて成功してからGPU smoke testへ進む。テスト数は今後変わり得るため、README記載の過去の件数との一致ではなく、
+実行したcommitでfailureが0件であることを確認する。
+DREAM4 archiveが未取得なら実データloaderテストはskipされ、4.3の配置後は実データを使って実行される。
+
+## 6. 最初の確認後にAIへ引き渡す
+
+初期設定と1–2時間の動作確認を人が行った後は、`run_gpu_campaign.sh`へ引き渡せる。
+このスクリプトは非対話で、smoke test、本実験、Phase 4–8の集約、成果物検査、raw archive、
+Git用の軽量成果物作成まで進める。
+`PUBLISH_GIT=1`なら、検査済みの軽量成果物だけをcommitして現在のbranchへpushする。
+
+campaignのrun IDは`<campaign-id>_smoke`と`<campaign-id>_full`である。以降の節および§9で
+`<run-id>`と書いている箇所は、campaign経由なら`<campaign-id>_full`を指す。§8の手動runと
+同じ文字列を`CAMPAIGN_ID`に使うと`results/runs/`に紛らわしい2つのディレクトリが並ぶため、
+手動runとcampaignではIDを変える。
+
+**campaignは全問題評価（`EVAL_LIMIT=0`）が既定であり、所要時間を見積もる中間段階を持たない。**
+smokeの2問題からいきなり全件本番へ進むため、総時間とVRAMの見積りは§8の中規模runで
+先に済ませておく。時間計測のためにcampaign自体を短くしたい場合だけ`EVAL_LIMIT`を明示的に
+渡せるが、その実行はpilot扱いであり、最終test結果やhyperparameter選択には使えない。
+
+引き渡し前に次が成立していることを確認する。
+
+- conda環境がactivate済み
+- `LTSR_WEIGHTS`、`LTSR_CONFIG`、`LTSR_EQ_SETTING`がexport済み
+- 4.2のGSE112372と4.3のDREAM4が取得済み
+- `git status --porcelain`が **完全に空**（untrackedを1つでも含むとcampaignは即座にexit 2で停止する）
+- `PUBLISH_GIT=1`なら`git config user.name`、`git config user.email`、`origin` remoteが設定済みで、
+  `git push origin HEAD`の認証も済んでいる
+- AC接続中のスリープと予定外再起動を抑止済み
+
+作業ツリーの検査は厳密なので、前のcampaignや手動runの残骸が起動を妨げる。特に、
+commitしていない`results/published/<run-id>/`が残っていると起動できない。commitするか削除してから始める。
+`graphs/`のうちsmoke由来のディレクトリ（`graphs/*_smoke/`と`graphs/gpu_smoke_*/`）と
+`results/published/*_smoke/`は使い捨てのため`.gitignore`済みであり、起動を妨げない。
+
+すでに人がsmoke testを完了していれば`RUN_SMOKE=0`にする。まだなら`RUN_SMOKE=1`のままAIへ渡す。
+
+### 6.1 AIへ委任する範囲（事前合意事項）
+
+`run_gpu_campaign.sh`は無人で完走する。一方、AIによる監視は連続的ではない。
+AIは常駐プロセスではなく、人が話しかけたときだけ動く。したがって、
+**「放置して戻れば終わっている」は成立するが、「異常が起きた瞬間にAIが気づいて対処する」は成立しない。**
+tmuxの中の計算はAIのセッションと無関係に走り続けるので、監視の粒度は人が何時間おきに確認するか次第である。
+
+このリポジトリはpublicであり、GPU runの軽量成果物を公開することは合意済みである。したがって
+campaignは`PUBLISH_GIT=1`で起動してよく、AIは検査済み成果物のcommitと現在branchへのpushまで実施してよい。
+公開されるのは`results/published/<run-id>/`と`graphs/<run-id>/`だけであり、raw run、checkpoint、
+取得した外部データは公開されない。
+
+失敗時の再実行について、AIは次の方針で判断する。
+
+**確認せず対処してよいもの**
+
+- smoke testの失敗全般（原因を直して再実行する）
+- 環境・パス・依存関係・シェル記述など、実験設定に影響しない機構的な失敗
+- 明らかなコードのバグで、修正が実験条件を変えないもの
+- archive、`export_run_summary.py`、git push段階の失敗（再計算不要。失敗したステップだけやり直す）
+
+修正後は、作業ツリーをcleanにするため修正をcommitしてから、**新しいcampaign ID**で再実行する。
+古いrun IDへ結果を混ぜてはならない。
+
+**必ず人に確認するもの**
+
+- 実験設定（seed数、epoch、`LR_GRID`、`EPOCH_GRID`、noise水準、`BEAM`、TPSR予算、`NMSE_EQUIV_MARGIN`）の変更
+- 検査基準・採用条件を緩めること。**Phaseを通すために閾値や必須項目を下げてはならない。** 落ちたら落ちたと報告する
+- 完了済みrun、archive、公開済み成果物の削除
+- 同じ原因で3回失敗した場合の続行可否
+- 想定所要時間を大きく超過している場合の続行可否
+- VRAM不足など、設定を落とさないと通らない失敗（設定変更は実験条件の変更であるため）
+
+### 6.2 起動は必ず`tmux`経由で行う（AI実行時の注意）
+
+`.claude/settings.json`はGit管理下にあるため、cloneすればGPU PCでも同じ許可設定が使われる。
+これは、長時間runの最中にAIが許可ダイアログで止まって何時間も無駄にすることを防ぐためである。
+許可しているのはpipeline実行、テスト、Git操作など必要なものだけで、force pushと成果物の一括削除は明示的に禁止している。
+
+そのうえで、**pipelineを§7・§8の形（環境変数の代入で始まる1行）のまま直接実行せず、必ず`tmux`の中で起動する。**
+
+```bash
+# 避ける：許可ルールに一致せず、離席中に確認待ちで停止し得る
+RUN_ID=... NPS=2 ... bash scripts/run_gpu_pipeline.sh
+
+# 推奨：tmuxセッションを作り、その中で上記コマンドを実行する
+tmux new -s ltsr-smoke
+```
+
+許可ルールは`Bash(bash scripts/run_gpu_pipeline.sh)`のようにコマンド名で書かれている。一方、
+§7・§8のコマンドは`RUN_ID=... NPS=2 ... bash scripts/...`と環境変数の代入から始まるため、
+ルールに一致せず確認ダイアログが出る可能性がある（一致判定の詳細な挙動は未確認）。
+`Bash(tmux *)`は許可済みなので、`tmux`の中で起動すればどちらの挙動でも停止しない。
+
+これは元々`tmux`を使う理由（リモートデスクトップを切断しても計算が続く）と同じ手順であり、
+新たな手間は生じない。**§8.1の中規模pilotだけは`tmux`の記述を省略しているので、そこも同様に
+`tmux`セッションを作ってから実行する。**
+
+### 6.3 campaignの起動と進捗確認
+
+```bash
+CAMPAIGN_ID=paper_gpu_YYYYMMDD_01
+mkdir -p results/runs
+tmux new-session -d -s ltsr-auto \
+  "cd '$PWD' && CAMPAIGN_ID='$CAMPAIGN_ID' RUN_SMOKE=0 PUBLISH_GIT=1 \
+  LTSR_WEIGHTS='$LTSR_WEIGHTS' LTSR_CONFIG='$LTSR_CONFIG' \
+  LTSR_EQ_SETTING='$LTSR_EQ_SETTING' bash scripts/run_gpu_campaign.sh \
+  > 'results/runs/${CAMPAIGN_ID}_campaign.log' 2>&1"
+```
+
+進捗確認は次だけでよい。
+
+```bash
+tmux attach -t ltsr-auto
+tail -f "results/runs/${CAMPAIGN_ID}_campaign.log"
+```
+
+campaignは次の条件で停止する。停止段階によってmanifestの状態と復旧方法が異なるため、
+**すべての失敗を「新しいcampaign IDで再実行」で片付けてはならない。**
+
+| 停止条件 | manifestの状態 | 復旧方法 |
+|---|---|---|
+| 作業ツリーがdirty、git設定不足（起動前検査） | 作成されない | 原因を直して同じIDで起動し直す |
+| CUDA/checkpoint/config検査の失敗（preflight） | 作成されない（runディレクトリも作られない） | 環境を直して同じIDで起動し直す |
+| smokeまたは本runのいずれかのPhase失敗 | `failed` | 原因を直し、**新しいcampaign ID**で再実行する |
+| 必須集約JSON・seed別ファイルの欠落 | `validation_failed` | 原因を切り分け、**新しいcampaign ID**で再実行する |
+| JSON破損、式レコードの必須欄欠落、式記録が0件 | `validation_failed` | 同上 |
+| archive、`export_run_summary.py`の失敗 | `publication_failed` | **再計算不要。** 失敗したステップだけをやり直す |
+| Git commit/push失敗（`PUBLISH_GIT=1`の場合） | `publication_failed` | **再計算不要。** 認証やremoteを直して手動でpushする |
+
+pipelineは検査より前に完走してmanifestを`complete`にするため、検査以降の失敗は
+`status`に`validation_failed`／`publication_failed`として上書きされ、`stages`に段階別の成否が残る。
+`validation.json`の`status`も`validated`か`failed`のいずれかになり、`failed`のrunは
+`export_run_summary.py`が公開を拒否する。
+
+AIはログ、manifestの`status`と`stages`、`validation.json`を調べ、コード・データ・資源不足のどれかを
+切り分ける。**再計算が必要なのは上表で「新しいcampaign ID」と書いた行だけ**であり、
+公開段階の失敗で数時間〜数十時間の再実行をしてはならない。
+
+## 7. 手動で小規模GPU smoke testを行う場合
+
+VS Codeのターミナルを閉じたりリモートデスクトップを切断したりしても計算が継続するよう、`tmux`内で起動する。
+
+```bash
+tmux new -s ltsr-smoke
+conda activate ltsr-gpu
+cd /path/to/LTSR
+export LTSR_WEIGHTS="$PWD/NSRS/weights/100M.ckpt"
+export LTSR_CONFIG="$PWD/NSRS/jupyter/100M/config.yaml"
+export LTSR_EQ_SETTING="$PWD/NSRS/jupyter/100M/eq_setting.json"
+RUN_ID=gpu_smoke_YYYYMMDD NPS=2 SEEDS="0 1" EPOCHS=1 EVAL_LIMIT=2 \
+LR_GRID="1e-4" EPOCH_GRID="1" PATIENCE=0 \
+BEAM=1 BFGS_RESTARTS=1 BFGS_STOP=0.2 NOISE="0.0" PYSR=0 DREAM4=0 \
+RANDOM_LAYER_SEEDS="0" NMSE_EQUIV_MARGIN=0.05 \
+bash scripts/run_gpu_pipeline.sh
+```
+
+`RANDOM_LAYER_SEEDS="0"`は必ず付ける。既定は`"0 1 2 3 4"`であり、省略するとPhase 5が
+random層集合を5通り学習してsmoke testが数倍遅くなる。campaign内蔵のsmokeもこの設定を使う。
+
+`RUN_ID`は既存ディレクトリと重複させない。pipelineは既存runを検出すると、結果混在を防ぐため停止する。
+
+`tmux`から離れるには`Ctrl-b`に続けて`d`を押す。再接続後は次で戻る。
+
+```bash
+tmux list-sessions
+tmux attach -t ltsr-smoke
+```
+
+別ターミナルから進捗だけを見る場合は次を使う。
+
+```bash
+tail -f results/runs/gpu_smoke_YYYYMMDD/logs/pipeline.log
+nvidia-smi
+```
+
+smoke test後は次を確認する。手動smokeでは検査スクリプトが自動では走らないので、
+`python scripts/validate_gpu_run.py --run-dir results/runs/gpu_smoke_YYYYMMDD`を明示的に実行する。
+
+- `manifest.json`の`status`が`complete`で、`stages.validation.status`が`complete`
+- `validation.json`の`status`が`validated`
+- Phase 4、5、6、8のJSONとreportがrun配下に存在する
+- `phase8_lodo_seed*/`がrun配下にあり、`results/phase_results/phase8/`を更新していない
+- Phase 8 LODO reportに同じrunのPhase 4から選んだ層とranking sourceが記録される
+- `per_problem`に生の最良式、簡約式、候補式一覧、`true_expr`（存在する場合）、変数対応、valid判定、失敗理由、複雑度が残る
+- `phase4_multiseed/equations_seed*.json`にPhase 4の条件別・問題別の数式が残る
+- `git status --short`に既存の追跡ファイルの変更がない。`RUN_ID`を`gpu_smoke_*`または`*_smoke`の形に
+  しておけば`graphs/`側もgitignoreされ、untrackedとして残って次のcampaign起動を妨げることがない
+
+## 8. 手動でGPU本実験を行う場合
+
+smoke testの所要時間とVRAM使用量を記録し、設定を確定してから新しい`tmux` sessionで実行する。
+
+### 8.1 まず中規模runで時間を見積もる
+
+BFGSは主にCPUを使い、decodeと`EVAL_LIMIT`が総時間を支配しやすい。**本番設定をそのまま流す前に、
+`EVAL_LIMIT=30`程度の中規模runで所要時間とVRAMを測る。** この中規模runはpilotであり、
+これを見てhyperparameterを変更した場合、そのrunは最終test結果の選択には使わない。
+
+このpilotも§6.2のとおり`tmux`セッションを作ってから実行する（`tmux new -s ltsr-pilot`）。
+
+```bash
+RUN_ID=pilot_gpu_YYYYMMDD_01 SEEDS="0 1" NPS=24 EPOCHS=8 EVAL_LIMIT=30 DREAM4=0 \
+LR_GRID="1e-5 3e-5 1e-4" EPOCH_GRID="4 8" PATIENCE=2 \
+RANDOM_LAYER_SEEDS="0 1 2 3 4" NMSE_EQUIV_MARGIN=0.05 \
+BEAM=5 BFGS_RESTARTS=5 BFGS_STOP=2.0 NOISE="0.0 0.05 0.1 0.2" PYSR=1 \
+bash scripts/run_gpu_pipeline.sh
+```
+
+Phase 7は`EVAL_LIMIT`の影響を受けない。Size10とSize100の全network（各5個）を全標的について
+SRするため、`DREAM4=1`のときはこれが総時間の支配項になり得る。Phase 7の時間は
+`DREAM4=1 SEEDS="0"`で1 seedだけ流して別途測る。
+
+### 8.2 本実験
+
+```bash
+tmux new -s ltsr-paper
+conda activate ltsr-gpu
+cd /path/to/LTSR
+export LTSR_WEIGHTS="$PWD/NSRS/weights/100M.ckpt"
+export LTSR_CONFIG="$PWD/NSRS/jupyter/100M/config.yaml"
+export LTSR_EQ_SETTING="$PWD/NSRS/jupyter/100M/eq_setting.json"
+RUN_ID=paper_gpu_YYYYMMDD_01 SEEDS="0 1 2 3 4" NPS=24 EPOCHS=8 EVAL_LIMIT=0 DREAM4=1 \
+LR_GRID="1e-5 3e-5 1e-4" EPOCH_GRID="4 8" PATIENCE=2 \
+RANDOM_LAYER_SEEDS="0 1 2 3 4" NMSE_EQUIV_MARGIN=0.05 \
+BEAM=5 BFGS_RESTARTS=5 BFGS_STOP=2.0 NOISE="0.0 0.05 0.1 0.2" PYSR=1 \
+bash scripts/run_gpu_pipeline.sh
+```
+
+`NOISE`と`EVAL_LIMIT`は既定値と同じだが、Phase 6のコストがノイズ水準の数に比例するため明示する。
+
+`LR_GRID`と`EPOCH_GRID`は、各trainable条件へ同じ候補数を与えるvalidation探索である。
+各候補は同じseedとデータ順で学習し、validation CEが最良の重みだけを独立testで一度評価する。
+`PATIENCE=0`でも全epoch中の最良validation重みを復元する。
+
+**この探索が適用されるのはPhase 4とPhase 5だけである。** Phase 6、Phase 7、Phase 8は
+固定学習率（`--lr`既定 1e-4）と固定epoch数で学習し、validationによる候補選択もbest-weight復元も行わない。
+これらのPhaseの結果を「条件間で探索予算をそろえた比較」として提示してはならない。
+
+Phase 6のTPSR予算はpipeline内で`--rollout 8 --horizon 30 --width 3`に固定されている。
+変更する場合は、本実験前に設定をコードへ明示し、commitを分ける。方法間ではwall-clock時間または候補評価回数も保存・比較する。
+
+## 9. 出力、Git履歴、回収
+
+```text
+results/runs/<run-id>/
+  manifest.json
+  validation.json                            validate_gpu_run.py の検査結果
+  logs/pipeline.log
+  input_data/
+    diverse_gpu/
+    phase7_dreamlike_v1/
+  phase4_multiseed/
+    equations_seed*.json
+    raw_scores_seed*.json
+    absolute_improvements_seed*.json
+    contribution_status_seed*.json
+    tuning_seed*.json
+    contrib_seed*.json
+    contrib_aggregate.json
+    contribution_status_aggregate.json
+    absolute_improvements_aggregate.json
+    layer_ranking_scores.json
+    layer_ranking_metadata.json
+    layer_rankings.json
+    layer_importance_evidence.json
+    ranking_stability.json
+  phase5_seed*/
+  phase5_multiseed/
+  phase6_noise_seed*/
+  phase6_noise_multiseed/
+  phase7_dream4_size10_seed*/
+  phase7_dream4_size100_seed*/
+  phase7_multiseed/
+  phase8_lodo_seed*/
+  phase8_lodo_multiseed/
+  reports/
+
+graphs/<run-id>/
+  figures/
+  tables/
+```
+
+manifestにはgit branch/commitとdirty状態、Python、`pip freeze`、PyTorch、CUDA、NVIDIA driver、GPU、
+checkpoint SHA256、GSE112372/DREAM4のtree SHA256、主要設定、開始・終了時刻、成否が保存される。
+`data_fingerprints`は **run開始時点** の内容から計算されるため、GSE112372とDREAM4は§4.2・§4.3で
+先に取得しておく必要がある。
+
+途中で失敗するとpipelineは停止し、`status`は`failed`になる。同じrun IDへ再実行して結果を混ぜず、原因を直して新しいrun IDを使う。
+pipeline完走後の検査・公開で失敗した場合は`status`が`validation_failed`または`publication_failed`へ
+上書きされ、`stages`に段階ごとの成否と時刻が残る。したがってrunの採否は`status`、`stages`、
+`validation.json`の3つで判断する。`status`が`complete`でも`validation.json`が無いrunは未検査であり、公開してはならない。
+
+各`per_problem`行とPhase 4の`equations_seed*.json`には最低限、次を保存する。
+
+- `eq_id`、`true_expr`
+- `pred_raw`（decoder/BFGSが返した最良式）と後方互換の`pred`
+- `pred_simplified`（SymPyによる簡約式）と`simplification_error`
+- `candidate_expressions`（NeSymReSでは返された候補式一覧）
+- `variable_names`と`variable_mapping`（局所変数、元列、実遺伝子名）
+- `decoder`、`decoder_metadata`、`failure_reason`
+- NMSE、R2、variable F1、complexity、valid判定、安全性指標
+
+`validate_gpu_run.py`はこれらの必須フィールド、変数対応の件数、失敗時の理由に加え、
+Phase 4のseed別ファイル（`equations_seed*`、`raw_scores_seed*`、`absolute_improvements_seed*`、
+`contribution_status_seed*`、`tuning_seed*`）と`contribution_status_aggregate.json`の存在を検査する。
+これらは§10の採用条件が根拠として参照するファイルなので、欠けているrunはarchive・Git公開へ進めない。
+検査に落ちたrunは`validation.json`が`status: failed`となり、`export_run_summary.py`が公開を拒否する。
+
+### なぜ`results/runs/`をgitignoreするのか
+
+`results/runs/`には、全問題の予測、ログ、生成入力データなど、再生成可能だが大きくなりやすいraw成果物が入る。
+これを通常のGit履歴へ入れると、削除後もrepository履歴へ残ってcloneが重くなり、checkpointや外部データを誤って含める危険もある。
+そのためraw runはgitignoreし、研究用ストレージのarchiveを正本とする。
+campaignのarchive先は既定で`results/archives/`であり、ここもGit管理外である。別ディスクや研究用ストレージへ
+直接保存する場合は、開始時に`ARCHIVE_DIR=/mnt/research-storage/ltsr`のように指定する。
+
+一方、GitHubから実験の存在と主要結果を確認できるよう、検査済みrunから次を`results/published/<run-id>/`へ自動抽出する。
+
+- manifestとvalidation結果
+- Phase 4–8の集約JSON
+- Phase別Markdown report
+- checkpoint SHA256、実行commit、branch
+
+`results/published/`と`graphs/`はgitignoreされていない。campaignを`PUBLISH_GIT=1`で起動した場合は、
+この軽量成果物と同じrunの図表だけをcommit・pushする。したがって、push後はGitHub上で集約結果と再現情報を確認できる。rawの全式・ログ・入力データは
+archive側に残し、公開用READMEにraw archiveの保管場所を追記する。
+
+`results/runs/`と取得データはGit管理外なので、GPU PCだけに置いたままにしない。完了後はrunと対応する図表をarchiveし、
+研究用ストレージへコピーする。この研究では、リモートデスクトップ接続時に手元PCのドライブを共有し、
+完成したarchiveとSHA256ファイルを共有ドライブ経由で手元PCへ回収する。archive作成例は次のとおりである。
+
+```bash
+RUN_ID=paper_gpu_YYYYMMDD_01
+tar -czf "${RUN_ID}.tar.gz" "results/runs/${RUN_ID}" "graphs/${RUN_ID}"
+sha256sum "${RUN_ID}.tar.gz" > "${RUN_ID}.tar.gz.sha256"
+```
+
+campaignを使った場合は、同じ2ファイルが自動的に次へ作成される。archiveには本runに加えて、
+smoke run（`results/runs/<campaign-id>_smoke`と`graphs/<campaign-id>_smoke`）と
+campaignログ（`results/runs/<campaign-id>_campaign.log`）も含まれる。campaignログはarchive作成時点で
+まだ書き込み中なので、archive内のコピーには末尾数行が入らない。最終的な終了行はGPU PC側のログで確認する。
+
+```text
+results/archives/<campaign-id>_full.tar.gz
+results/archives/<campaign-id>_full.tar.gz.sha256
+```
+
+リモートデスクトップ接続前に、接続設定の「ローカル リソース」から回収先ドライブを共有する。
+GPU PCのWindows Explorerでは通常、共有したドライブが「リダイレクトされたドライブ」または
+`\\tsclient\<drive-letter>`として見える。WSL2で実験した場合は、Windows Explorerから
+`\\wsl.localhost\<distribution>\home\<user>\...\LTSR\results\archives`を開き、上の2ファイルを
+共有ドライブへコピーする。distribution名はGPU PC側のPowerShellで`wsl -l -q`を実行して確認できる。
+
+コピー後は手元PCのPowerShellでSHA256を再計算し、`.sha256`に記録された値と一致することを確認する。
+
+```powershell
+Get-FileHash -Algorithm SHA256 .\<campaign-id>_full.tar.gz
+Get-Content .\<campaign-id>_full.tar.gz.sha256
+```
+
+一致とarchiveの展開確認が終わるまでは、GPU PC側の`results/runs/`と`results/archives/`を削除しない。
+
+巨大なrun、checkpoint、DREAM4/GEOデータをGit commitしない。コードや文書を変更した場合だけ、差分とテスト結果を確認して
+別途commit・pushする。run archiveのコピー後に元データを削除するかは、archiveの展開確認とバックアップ確認を終えてから判断する。
+
+## 10. 結果を採用する条件
+
+- runのmanifestが`status: complete`で、`validation.json`が`status: validated`である。
+- Phase 4はvalidationのみで層を選択し、testを使用していない。
+- Phase 8は同じGPU runの`phase4_multiseed/layer_ranking_scores.json`を使い、旧CPU順位へfallbackしていない。
+- **Phase 4とPhase 5では** 各trainable条件が同じLR×epoch候補数で探索され、選択基準はvalidation CEだけである。
+- Phase 6・7・8は固定学習率と固定epochで学習しており、探索予算をそろえた比較としては提示していない。
+- `contribution_status_aggregate.json`でfull FTがpretrainedを改善したseed数を確認する。
+- full FTが全seedで改善した指標だけ正規化寄与度を使い、それ以外はvalidation上のpretrainedからの絶対改善量へ自動的に切り替えている。
+- `layer_ranking_metadata.json`に指標ごとの順位根拠、`layer_rankings.json`に統合順位、`ranking_stability.json`にseed間Spearman/Kendall順位相関が残る。
+- `layer_importance_evidence.json`で改善スコアの95%区間が0を超える層を確認し、単に「相対的に最上位」の層を重要層と断定していない。
+- 正規化寄与度と絶対改善量のどちらからも有効なlive Phase 4順位を作れない場合だけ、後続Phaseは停止している。
+- Phase 5のtest結果を見てLR、epoch、top-kを選び直していない。
+- Phase 5は5個のrandom層集合を各training seed内で平均し、top 1/2/3とpretrained、middle、bottom、fullについてNMSE、R2、valid率、式複雑度をpaired比較している。
+- top対fullはfailure-penalized NMSE差の95% t区間を保存し、事前指定した`NMSE_EQUIV_MARGIN`内への包含で同等性・非劣性を判定している。
+- valid prediction rateとfailure-penalized NMSEを主結果に含める。
+- symbolic recovery、variable F1、複雑度、実行時間をNMSEと併記する。
+- seed、問題、networkを区別し、paired比較とStudentのt区間を適切な独立単位で計算する。
+- 単一seed、単一network、4 donorsの結果を一般的結論にしていない。
+- DREAM4ではtrajectory分割後に有限差分を計算している。
+- DREAM4のcorr/MI/LASSO候補はtrain trajectoryだけで選び、test trajectoryでは固定している。
+- Phase 6はFT主効果、TPSR主効果、交互作用をseed内paired差として集約している。
+- Phase 7はSize10/100の全networkを複数seedで評価し、network内平均とseed間t区間を区別している。
+- Phase 8は複数training/decode seedでLODOを行い、全式、valid率、特異点、外挿有限性を保存している。
+- GSE112372の導関数は真のODE微分ではなくproxyであり、ヒトの真の因果機構を回復したとは表現していない。
+- `tan`、危険な除算、特異点、外挿不安定性を、NMSEが良いという理由だけで妥当な式としていない。
+
+Phase 8は4 donorsしかないapplication demoであり、seedを増やしても生物学的独立標本数が増えるわけではない。
+seed間CIとdonor間変動を混同せず、真のヒト制御ODEや因果機構を回復したとは主張しない。
+
+## 11. Google Colab ProでPhase別に実行する場合
+
+Colab用Notebookは`notebooks/colab/`にあり、`00_setup_preflight.ipynb`から
+`09_validate_archive.ipynb`まで番号順に使う。詳細計画は
+[`plan/20260726_colabexe.md`](plan/20260726_colabexe.md)を参照する。
+
+### 11.1 Colab固有の前提
+
+- **研究コードのPython 3.10を必須とする。** 現行Colab標準kernelが3.11/3.12でも、
+  Phase 0 Notebookの最初のセルで`/content/ltsr-py310/bin/python`へ公式Python 3.10 Minicondaを導入する。
+  Colab UI kernelとは独立させ、preflight、依存関係導入、全Phase、最終検査は
+  `PY=/content/ltsr-py310/bin/python`を明示して実行し、workerが3.10でなければ停止する。
+- NotebookをDriveで開いても、このrepositoryの`src/`、`scripts/`、`NSRS/`、`TPSR/`は自動的に見えない。
+  Notebookがbranchを`/content/LTSR`へcloneし、Driveの`source_lock.json`に固定したcommitへcheckoutする。
+- Googleログイン、MFA、Drive mount、GPU runtime接続は人が行う。その後のセル実行とエラー対応はAIへ委任できる。
+- Colab ProでもGPU種類、最大runtime、compute unitsは保証されない。`tmux`はbackend終了への保険にならないため、
+  実行中セルを前景で動かし、Drive checkpointとresumeを使う。
+- Driveにはraw run、checkpoint、DREAM4、GSE112372、archiveを保存する。
+  高頻度I/Oは`/content`で行い、3分ごととPhase/shard完了時にDriveへ同期する。
+
+### 11.2 Phase分割とresume
+
+Colab Notebookは同じ`RUN_ID`へ次の環境変数を渡し、Phaseを1つずつ実行する。
+
+```text
+START_PHASE=<4..8>
+STOP_AFTER_PHASE=<同じPhase>
+RESUME=1
+STRICT_RESUME=1
+DREAM4_SHARD_NETWORKS=1
+```
+
+- Phase 4は6つのseed別audit JSONがすべて存在し、JSONとして読めるseedだけresumeでskipする。
+  全seedが揃った後にaggregate、ranking、stabilityを再構築する。
+- Phase 5/6/8は既存どおりseed単位でresumeする。
+- Phase 7は`seed / size / network`単位へ分割する。本番はSize10/100のnetwork 1–5をすべて実行する。
+- `STRICT_RESUME=1`では固定commit、clean worktree、科学設定が元manifestと一致しなければ停止する。
+- `MAX_PARALLEL_SEEDS`は結果を変えない有界seed並列である。Phase 4もseedごとの独立workerと
+  完了後のaggregate再構築に対応し、Phase 4–8へ適用できる。
+
+### 11.3 Colab本実験のPhase 6設定
+
+ユーザー指示により、Colab smoke、pilot、本実験のPhase 6はすべて次へ固定する。
+
+```text
+NOISE="0.1"
+LTSR_DECODE_TIMEOUT_SEC=240
+```
+
+`noise=0.0/0.05/0.2`は計算量緩和のため実行しない。このため、Colab runからH3のノイズ頑健性slopeや
+noise水準間比較を提示しない。Phase 6で評価するのは`noise=0.1`におけるFT主効果、TPSR主効果、
+交互作用、valid率、failure-penalized NMSE、式複雑度、実行時間である。
+既存の4水準CPU pilotや別GPU runと同じ実験条件として集約しない。
+
+### 11.4 承認済み計算量削減run
+
+2026-07-26のユーザー指示により、途中の`colab_paper_20260726_01`を停止し、
+以降は`config_for("reduced", ...)`で次の固定設定を使う。
+
+```text
+SEEDS="0 1 2"
+NPS=12
+EVAL_LIMIT=30
+LR_GRID="1e-5 3e-5 1e-4"
+EPOCH_GRID="4 8"
+RANDOM_LAYER_SEEDS="0 1 2"
+BEAM=2
+BFGS_RESTARTS=2
+BFGS_STOP=0.5
+NOISE="0.1"
+MAX_PARALLEL_SEEDS=2
+```
+
+- Phase 4/5では同一learning rateの4/8 epoch候補を1本の8 epoch軌跡から評価し、
+  4 epoch時点のbest validation checkpointを保存する。候補数、初期値、データ順、validation選択基準は変えない。
+- Phase 4は最大2 seedを並列実行し、seed別audit JSONが揃った後に共有rankingを再構築する。
+- Phase 5–8も3 seedsを使用し、Phase 5/6は同じ`EVAL_LIMIT=30`を使用する。
+- Phase 7はSize10/100のnetwork 1–5と全targetを維持する。Phase 8は元からbeam 1なので増やさない。
+- PySR iterationsとTPSR rollout/horizon/widthは変更しない。
+- これは元の5-seed・全件・beam 5の`paper`設定とは別の縮小プロトコルである。
+  結果、manifest、reportを元設定と同一条件として集約しない。
+
+### 11.5 Colab成果物
+
+```text
+MyDrive/LTSR_colab/
+  source_lock.json
+  checkpoints/100M.ckpt
+  data/dream4.tar.gz
+  data/gse112372_lps.tar.gz
+  runs/<run-id>/
+  graphs/<run-id>/
+  archives/<run-id>.tar.gz
+  archives/<run-id>.tar.gz.sha256
+```
+
+Phase 9で`validate_gpu_run.py`を通し、`manifest.json`が`complete`、
+`validation.json`が`validated`であることを確認してからarchiveを採用する。
+
+## 付録A. 実際に使用するGPU PCの実測仕様
+
+2026-07-23にGPU PC上で実測した構成である。本文の手順は特定の機種を前提としないが、
+所要時間やVRAMの見積り、`.wslconfig`の設定、archiveの回収計画はこの構成を基準に判断する。
+
+| 項目 | 実測値 |
+|---|---|
+| マザーボード | MSI PRO B760M-A WIFI (MS-7D99) |
+| OS | Windows 11 Pro 10.0.26200 |
+| CPU | Intel Core i7-14700F、20コア（8 P-core + 12 E-core）／28スレッド、L3 33MB |
+| メモリ | 32GB（SK Hynix DDR5-5600 16GB×2） |
+| GPU | NVIDIA GeForce RTX 4070 Ti SUPER |
+| VRAM | 16,376 MiB（16GB GDDR6X） |
+| Compute Capability | 8.9（Ada Lovelace） |
+| NVIDIAドライバ | 591.86（対応CUDA 13.1、WDDM） |
+| GPU電力上限 | 285W |
+| ストレージ | Kingston SNV2S2000G 2TB NVMe SSD **1台のみ**（C:のみ、容量1862GB） |
+| WSL | WSL 2.4.13.0 / kernel 5.15.167.4 |
+
+この構成が本実験に与える含意は次のとおりである。
+
+- **VRAMは制約にならない。** NeSymReSの100Mモデルに対し16GBは十分に余裕があり、§6.1の
+  「VRAM不足のため設定を落とす」判断が必要になる可能性は低い。もし発生した場合も、
+  設定変更は実験条件の変更なので§6.1のとおり人へ確認する。
+- **総wall-clockはCPU側が支配しやすい。** §8.1のとおりBFGSは主にCPUを使い、PySRもCPU並列である。
+  28スレッドはこの部分に効くが、GPU性能から所要時間を外挿してはならない。§8.1の中規模pilotで実測する。
+- **ホストメモリ32GBに対し、WSL2は既定でその50%（約16GB）しか割り当てない。** PySRの並列実行や
+  DREAM4 Size 100を含むrunではこれが上限になり得る。必要なら`%USERPROFILE%\.wslconfig`で
+  `memory`と`processors`を明示する。変更後は`wsl --shutdown`で反映する。
+- **物理ディスクは1台だけである。** したがって§9の`ARCHIVE_DIR=/mnt/research-storage/ltsr`のような
+  別ディスクへの直接archiveはこのPCでは行えない。既定の`results/archives/`へ作成し、
+  §9の`\\tsclient`経由で手元PCへ回収する。回収とSHA256照合が済むまでGPU PC側を削除しない。
+- 電源設定はAC接続時にスリープしない設定になっていることを確認済みである（`powercfg`のAC standby index = 0）。
+  Windows Updateの再起動時間帯は長時間run開始前に別途確認する。
+
+計測に使ったコマンドは次のとおりである（Windows側のPowerShell）。
+
+```powershell
+nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap,power.limit --format=csv
+Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors
+Get-CimInstance Win32_PhysicalMemory | Select-Object Capacity,Speed,Manufacturer
+Get-PhysicalDisk | Select-Object FriendlyName,MediaType,Size,BusType
+powercfg /q SCHEME_CURRENT SUB_SLEEP STANDBYIDLE
+wsl --status
+```
+
+## 付録B. 実際の本実験runの記録とパイプライン改修（2026-07-23〜25）
+
+本実験を進める中で発見・修正した不具合、追加した機能、実際のrun履歴、設定変更を記録する。
+将来の再現・再開の参照用。コミットはすべて`gpu-scale-prep`（HEAD=`75d84db`、`origin`と同期）。
+
+### B.1 本実験中に発見・修正したバグ
+
+- **`17a31c7` Phase 6 TPSRをPOSIXで動くように（pathlibガード＋UCT配線＋集約None耐性）**
+  - `TPSR/symbolicregression/e2e_model.py`（と`scripts/phase0_tpsr_smoke.py`）が無条件に
+    `pathlib.PosixPath = pathlib.WindowsPath`を実行し、Linux/WSLでは`pathlib.Path()`が未対応の
+    `WindowsPath`を生成→直後の`networkx` importが`NotImplementedError`で全滅していた。`os.name=="nt"`でガード。
+  - `src/models/tpsr_adapter.py`が`UCT(...)`に`alg`を渡さず既定の`var_p_uct`へ落ち、同梱MCTSに無い
+    `ChanceNode.prob`で`AttributeError`。宣言済みの`alg=params.uct_alg`（="uct"）と`ucb_base`を配線。
+  - `scripts/aggregate_phase6_runs.py`が有効予測0件セルの`complexity=None`で`float(None)`クラッシュ→None安全化。
+  - 結果：TPSRがend-to-endで実式を返すようになった。
+
+- **`3d139ba` symbolic_recoveryのSymPyに実時間タイムアウト**
+  - `src/evaluation/equation_metrics.py`の`symbolic_recovery`が`.equals()`/`simplify()`で、ある病的な
+    予測式に対しSymPyの多項式因数分解（dmp_zz_wang Hensel lifting）が事実上停止し、Phase 5が1問題で
+    **4時間以上ハング**した（CPU busyだが例外を出さずtry/exceptで捕まらない）。
+  - `to_skeleton`と`symbolic_recovery`の重いSymPy呼び出しをSIGALRMベースの10秒タイムアウトで保護。
+    超過は「等価と証明できず（=未回復・保守側）」扱いでスコアを膨らませない。正常式は<1秒。main threadのみ作動。
+
+- **`75d84db` seed並列(A)とphase-resume(C)を`run_gpu_pipeline.sh`へ追加（既定OFFで挙動不変）**
+  - **A: `MAX_PARALLEL_SEEDS`**（既定1）。Phase 5/6/7/8のper-seedループを有界並列で起動。各seedは
+    無変更の独立プロセスなので**出力はバイト一致**（速度のみ向上）。seed数（=5）が上限。
+  - **C: `RESUME`**（既定0）。既存run dirへ再入し、最終出力が存在するPhase/seedをskip。
+    `run_manifest.py`に`resume`アクション（元の来歴を保持しつつresume記録を追記）を追加。
+  - スレッド数は変更していない（数値のバイト一致を守るため）。CPU競合が問題なら手動で`OMP_NUM_THREADS`等を絞る。
+
+### B.2 実際のrun履歴（_03 → _04 → _05）
+
+- **`paper_gpu_20260723_03`**：Phase 5でSymPyハング（`3d139ba`で修正）。破棄。
+- **`paper_gpu_20260723_04`**：`3d139ba`で起動。Phase 4（全5 seed, 約6.3h）完了。Phase 5途中で、
+  最適化版へ移行するため停止。**Phase 4成果物と`input_data/`は温存**。
+- **`paper_gpu_20260723_05`**（現行）：最適化版`75d84db`で起動。**_04の完了済み`phase4_multiseed/`と
+  `input_data/`を_05のrun dirへコピーし、`RESUME=1`でPhase 4生成をスキップ**（=6.3hを再計算しない）。
+  Phase 4コードは`3d139ba`と`75d84db`で同一のため、救済したPhase 4出力は本runのcommitが生成するものと一致する
+  （`results/runs/paper_gpu_20260723_05_full/PROVENANCE_NOTE.txt`に明記）。
+
+### B.3 中断とresume（環境の教訓）
+
+- _05は一度、**セッション/PCを閉じた際にtmuxごと停止**した（RDPの「切断」ではなく、サインアウト/WSL終了/
+  PCスリープ・再起動のいずれか）。§1のとおりtmuxはRDP切断では生き残るが、これらでは死ぬ。
+- 完了済みのPhase 4/5はディスクに残り、`RESUME=1 RUN_SMOKE=0`でPhase 6から再開でき、損失はほぼゼロだった。
+- 教訓：長時間runでは離席時に必ずRDPを**「切断」**。サインアウト/スリープ/シャットダウン/`wsl --shutdown`は避ける。
+  resume(C)はこの種の中断への保険として機能する。
+
+### B.4 並列度の引き上げ（`MAX_PARALLEL_SEEDS=5`）
+
+- 当初`MAX_PARALLEL_SEEDS=3`で起動したが、実測で1プロセス≈VRAM 1.5GB・CPU 2コアと判明（16GB/28スレッドに余裕）。
+- seed数=5なので`MAX_PARALLEL_SEEDS=5`（全seed同時=1波）が意味のある最大値。stop→`RESUME`再起動で5へ引き上げ、
+  Phase 5/6を高速化。これより速くするには「seed内の問題を並列化する（per-problem並列, 工夫B）」が必要だが、
+  Bは乱数スキームが変わり結果が変わるため今回は不採用。
+
+### B.5 _05のスコープ変更：Phase 6は`noise=0.1`のみ（ユーザー指示）
+
+- 時間短縮のため、Phase 6のnoise sweepを既定の`0.0/0.05/0.1/0.2`（4水準）から**`NOISE="0.1"`（単一水準）**へ変更して再実行。
+- **影響**：仮説H3のノイズ頑健性スロープは2水準以上が必要なため、この_05では算出されない
+  （`phase6_noise_sweep.py`の`len(noises)>=2`ガードでskip、クラッシュはしない）。§10の「Phase 6のノイズ主張」は
+  このrunでは提示できない。Phase 4/5は影響を受けない。manifestに`LTSR_NOISE=0.1`が記録され、`PROVENANCE_NOTE.txt`にも明記。
+- これは§6.1の「実験設定（noise水準）の変更＝要人確認」に該当し、ユーザーの明示指示で実施した。
+
+### B.6 現在の状態とPhase 7/8の再開手順（2026-07-25時点）
+
+- _05は**Phase 6（noise=0.1）を実行中**。Phase 6集約が出た時点で**自動停止**する（別tmuxセッション`ltsr-stopper`が
+  `phase6_noise_multiseed/summary.json`を検知して`ltsr-auto`をkill）。停止後、Phase 4/5/6の結果を温存する。
+  **`results/runs/paper_gpu_20260723_05_full/`を削除しないこと**（Phase 7/8のresumeに必要）。
+- **Phase 7/8を後日再開**するには、同じrun dirに対して次を`tmux`内で実行する（Phase 4/5/6はskip、
+  Phase 7→8→検査→archive→publishまで進む）：
+
+```bash
+export LTSR_WEIGHTS="$PWD/NSRS/weights/100M.ckpt"
+export LTSR_CONFIG="$PWD/NSRS/jupyter/100M/config.yaml"
+export LTSR_EQ_SETTING="$PWD/NSRS/jupyter/100M/eq_setting.json"
+tmux new-session -d -s ltsr-auto -c "$PWD" \
+  "CAMPAIGN_ID=paper_gpu_20260723_05 RUN_SMOKE=0 PUBLISH_GIT=1 \
+   MAX_PARALLEL_SEEDS=5 RESUME=1 DREAM4=1 \
+   LTSR_WEIGHTS='$LTSR_WEIGHTS' LTSR_CONFIG='$LTSR_CONFIG' LTSR_EQ_SETTING='$LTSR_EQ_SETTING' \
+   bash scripts/run_gpu_campaign.sh >> results/runs/paper_gpu_20260723_05_campaign.log 2>&1"
+```
+
+  - 前提：run dirが無傷、commitが`75d84db`のまま（ブランチ切替・コード変更をしない）。
+  - Phase 6で`noise=0.1`のみを使ったことはPhase 7/8に影響しない（Phase 7/8は各自の別ノイズ設定）。
+  - 停止直後のmanifest `status`はkillの副作用で`failed`（=未完・中断の意）。resumeすれば`running`→`complete`に戻る。
+
+### B.7 バックアップ（`results/runs/`はGit管理外）
+
+- `results/runs/`はgitignore（生成物・全予測・ログ・入力）。GPU PCだけに置かず、§9の手順で`tar.gz`＋`sha256`を作り、
+  Drive/共有ドライブへ**コピー**（移動ではなく）する。ローカルはPhase 7/8のresume用に残す。
+
+# memo20260727
+- probingの実装
+- 演算子セットの見直し。
+
+## 付録C. Google Colab Proで実際に行ったGPU_RUN1（2026-07-26〜29）
+
+### C.1 実行条件
+
+この節は、§11のColab手順を使って実際に行った最初のColab実行を記録する。
+成功した結果だけでなく、計算量爆発、runtime切断、継続run、未完了部分も含める。
+このGPU_RUN1は計算資源制約下のreduced runであり、全Phase・全networkを同一条件で完走したpaper runではない。
+
+- ブランチ: `20260726/gpu-scale-prep-colab`
+- 実行基盤: Google Colab Pro
+- 主なGPU: NVIDIA L4
+- 研究コード用Python: Python 3.10
+- Drive: `/content/drive/MyDrive/LTSR_colab`
+- Drive空き容量: 1 TB以上
+- repository: `/content/LTSR`
+- run種別: `reduced`
+- seeds: `0 1 2`
+- noise: `0.1`のみ
+- 計算量対策後のbeam: 主に`2`、Phase 8は`1`
+- Phase 7 target timeout: 最終的に240秒
+
+Colab UI kernelとは別にPython 3.10 workerを用意した。
+Driveにはcheckpoint、外部データ、run途中成果物、ログを保存し、Colab切断後も復元できる構成にした。
+
+### C.2 継続run
+
+長時間実行中にコード修正が複数回必要になったため、異なるcommitを同一runへ不透明に混ぜず、新しいrunへ成果物を継承した。
+
+- `colab_reduced_20260726_01`: Phase 0から開始し、Phase 4–6までの主要成果物を作成
+- `colab_reduced_20260728_01`: Phase 7 target checkpointおよび再開修正後の継続
+- `colab_reduced_20260729_01`: Phase 7 hard timeout、再開処理追加後の継続
+- `colab_reduced_20260729_02`: worker recycling追加後の継続。Phase 7縮小集計を保存
+- `colab_reduced_20260729_03`: 最適化したPhase 8用。`..._02`の成果物を継承
+
+継続runでは、元run、元manifest、元Git commit、コピーしたファイルとSHA256を`continuation.json`へ記録する。
+
+### C.3 Phase 0–6
+
+#### Phase 0
+
+- Drive mount、Python 3.10 worker、checkpoint、DREAM4、GSE112372を準備した。
+- GitHub上の存在しないcommit refをColabが開いて404になったため、Notebookが使うsource commitとDriveの`source_lock.json`を一致させる方式へ変更した。
+- GPU preflightで判明した依存関係・互換性の問題を修正した。
+
+#### Phase 1
+
+- 初期セルのエラーを修正し、合成データ成果物を作成した。
+- GPU_RUN1ではnoiseを`0.1`だけに限定し、他のnoise水準を省略した。
+
+#### Phase 2
+
+- エラーなく完了した。
+- smokeだけで完了扱いにせず、承認済みreduced設定を実行した。
+
+#### Phase 3
+
+- エラーなく完了した。
+- 実測は約10分だった。
+
+#### Phase 4
+
+- 最初の実行でエラーが発生した。
+- 修正後も計算時間が大きくなる見込みだったため一度停止し、beam、候補数、評価予算、不要な反復を削減した。
+- 同種の削減をPhase 5–8にも可能な範囲で反映した。
+- validationだけで層を選び、testを層rankingへ使わない原則は維持した。
+- 短縮後の設定で完了した。
+
+#### Phase 5
+
+- reduced本実行として完了した。
+- 条件別結果、paired comparisons、random-layer条件、top-vs-full評価などをsummaryへ保存した。
+
+#### Phase 6
+
+- CPU側が支配する処理で、L4の利点が小さい場面があった。
+- Colabの再接続停止、ページ更新不能、外出中のruntime切断が起きた。
+- 保存済み成果物からresumeし、最終的に完了した。
+- CPUを100%使用する処理をColab GPU runtimeで行うのは非効率だと判断した。
+
+### C.4 Phase 7で起きた計算量爆発
+
+Phase 7がGPU_RUN1で最も多くの時間とColab compute unitsを消費した。
+当初のreduced設定でも、3 seeds、Size10/100、network 1–5、Size100の全対象targetについて、
+`pretrained_oracle`、`selective_oracle`、`selective_corr`を評価する計画だった。
+
+Size100だけで約2,820 target evaluationsとなる。
+全targetが240秒へ到達する極端な場合、直列上限は次のとおりである。
+
+```text
+2820 × 240 / 3600 = 188時間
+```
+
+実際には全targetがtimeoutしたわけではないが、遅いtargetが全体時間を支配した。
+
+発生した問題:
+
+- 数時間実行後のColab切断
+- exit status 137（RAM不足またはOSによるprocess kill）
+- exit status 2（resume/checkpoint処理の不整合）
+- network完了まで最終JSONが作られず、Driveから進捗を判断しにくい
+- runtime切断時に長い計算を再度行う危険
+- BFGS、式簡約、特異な候補式による長時間化
+- L4でもCPU探索が律速する場面
+
+追加した対策:
+
+1. `seed / size / network`単位のshard
+2. Size100のtarget単位checkpoint
+3. target完了数と経過時間の保存
+4. 240秒のhard wall-clock timeout
+5. timeoutとdecode失敗をfailureとして保存
+6. 60 targetごとのworker recycling
+7. 3分ごとのDrive同期
+8. runtime再起動後の厳密なresume
+9. commit変更時のprovenance付き継続run
+
+#### 最終的なPhase 7採用範囲
+
+全15個のSize100 seed-network shard完走は、時間とcompute unitsの制約により断念した。
+結果値を見て都合よく選ぶのではなく、全3 seedで全条件が揃った最大の共通network集合を採用した。
+
+- included seeds: `0, 1, 2`
+- included networks: `1, 2, 3`
+- planned networks: `1, 2, 3, 4, 5`
+- conditions: `pretrained_oracle`, `selective_oracle`, `selective_corr`
+- 完全shard: 3 seeds × 3 networks = 9
+
+network 4–5の完了済み追加shardは削除せず、補足成果物として残したが主集計へ混ぜなかった。
+縮小理由、選択規則、対象seed/network、timeoutは次へ保存した。
+
+- `phase7_multiseed/summary.json`
+- `phase7_multiseed/curtailment.json`
+
+この結果は「DREAM4全5 networks完了」ではなく、計算制約付きの3 seeds × 3 networks結果として扱う。
+
+### C.5 Phase 8実行前に行った短縮
+
+Phase 8の本実行前にコードを調査し、次を確認した。
+
+- 同じ学習データからin-donor用とholdout用に式を2回decodeしていた
+- Phase 7のhard timeoutがPhase 8へ実際には適用されていなかった
+- PySR実行中もColab L4を占有する設計だった
+- donor fold途中のcheckpointがなかった
+- 2 seed並列時に100MモデルのcopyがRAMを圧迫する可能性があった
+
+実行前に次へ変更した。
+
+- NeSymReSはtrain donorから式を1回だけdecodeする
+- 同じ式をin-donorとholdout donorの両方で評価する
+- Phase 8は全target一律30秒timeout
+- donor fold単位のcheckpoint/resume
+- 不要model copyとCUDA cacheの解放
+- ColabではNeSymReSだけを実行
+- PySRはローカルCPUで12 iterationsを実行し、後から同じseed/foldへ統合
+
+最適化済みPhase 8は`colab_reduced_20260729_03`で実行する。
+本節更新時点では、最終Phase 8結果、ローカルPySR、Phase 9 validationは未完了である。
+
+### C.6 当初計画からの主な変更
+
+| 項目 | 当初 | GPU_RUN1での変更 | 理由 |
+|---|---|---|---|
+| noise | 複数水準 | `0.1`のみ | 計算量削減 |
+| smoke | 各段階で確認 | 接続・出力・致命的エラー確認だけ | smokeは研究結果にならない |
+| beam | 大きいbudget | 主に`2`、Phase 8は`1` | decode短縮 |
+| Phase 7 timeout | 長い・未統一 | 240秒hard timeout | pathological targetの上限 |
+| Phase 7保存 | network完了中心 | target checkpoint + worker recycle | 切断・137からの復旧 |
+| Phase 7 network | 1–5 | 主集計は1–3 | 全seed共通の完全比較単位 |
+| Phase 8 decode | train/holdoutで別decode | 1回生成して両方で評価 | 約半減かつ評価設計を改善 |
+| Phase 8 timeout | 実質なし | 最初から一律30秒 | 計算爆発防止 |
+| PySR | Colab内 | ローカルCPU | L4 units節約 |
+| code変更 | 同run resume | 新runへprovenance付き継承 | 再現性 |
+
+### C.7 GPU_RUN1から得た知見
+
+1. Phase 7の最大要因はGPU性能だけでなく、target数、条件数、BFGS、遅いtargetのtimeoutである。
+2. 上位GPUへ変更しても、PySR、BFGS、式簡約、MCTSなどCPU律速部分は比例して速くならない。
+3. 長時間runではtargetまたはfold単位checkpointが必須である。
+4. timeoutは途中から変えず、次回はrun開始前に統一する。
+5. 未完了runを切る場合はmetricを見て選ばず、全seed共通の完全比較単位を規則で決める。
+6. GPU学習・推論とCPU-only baseline・集計を分離する。
+
+### C.8 未完了作業
+
+- 最適化済みPhase 8 NeSymReS LODO
+- ローカルCPUでのPhase 8 PySR LODO
+- Colab成果物とローカルPySR成果物の統合
+- Phase 9 validation、archive、SHA256
+- 全5 DREAM4 networksを統一15秒budgetで再実行するGPU_RUN2

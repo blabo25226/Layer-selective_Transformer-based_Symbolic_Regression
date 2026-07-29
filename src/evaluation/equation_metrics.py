@@ -3,11 +3,66 @@
 from __future__ import annotations
 
 import re
+import signal
+import threading
+from contextlib import contextmanager
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 from sympy import simplify, sympify
 from sympy.core.expr import Expr
+
+# Some predicted expressions send SymPy's polynomial factorization / trigsimp
+# into effectively unbounded work (e.g. dmp_zz_wang Hensel lifting). These are
+# CPU-bound pure-Python loops that never raise, so try/except cannot stop them.
+# Guard the heavy symbolic calls with a wall-clock limit; on timeout we treat
+# the comparison as "could not prove equivalence" (the conservative outcome that
+# never inflates a recovery score).
+SYMPY_OP_TIMEOUT_SEC = 10.0
+
+
+class _SymTimeout(Exception):
+    """Raised when a guarded SymPy call exceeds SYMPY_OP_TIMEOUT_SEC."""
+
+
+@contextmanager
+def _time_limit(seconds: float):
+    """Best-effort wall-clock limit via SIGALRM (main thread, POSIX only).
+
+    Off the main thread or without SIGALRM the call runs unguarded rather than
+    failing; the eval loops that hit the pathological expressions run on the
+    main thread, which is where this matters.
+    """
+    if (
+        seconds <= 0
+        or not hasattr(signal, "SIGALRM")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        yield
+        return
+
+    def _handler(signum, frame):
+        raise _SymTimeout()
+
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def _timed_simplify(expr, seconds: float = SYMPY_OP_TIMEOUT_SEC):
+    """simplify(expr) with a hard time limit (raises _SymTimeout on timeout)."""
+    with _time_limit(seconds):
+        return simplify(expr)
+
+
+def _timed_equals(a, b, seconds: float = SYMPY_OP_TIMEOUT_SEC) -> bool:
+    """a.equals(b) with a hard time limit (raises _SymTimeout on timeout)."""
+    with _time_limit(seconds):
+        return bool(a.equals(b))
 
 
 def nmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -72,12 +127,12 @@ def to_skeleton(expr: str) -> Optional[Expr]:
         from nesymres.architectures.data import constants_to_placeholder
 
         sk = constants_to_placeholder(_normalize_expr_str(expr))
-        return simplify(sympify(sk))
+        return _timed_simplify(sympify(sk))
     except Exception:
         try:
             cleaned = re.sub(r"\d+\.?\d*(?:[eE][+-]?\d+)?", "c", _normalize_expr_str(expr))
             cleaned = re.sub(r"c+", "c", cleaned)
-            return simplify(sympify(cleaned))
+            return _timed_simplify(sympify(cleaned))
         except Exception:
             return None
 
@@ -102,8 +157,8 @@ def symbolic_recovery(
     skeleton = 0.0
     if sk_true is not None and sk_pred is not None:
         try:
-            skeleton = 1.0 if simplify(sk_true - sk_pred) == 0 else 0.0
-            if skeleton == 0.0 and sk_true.equals(sk_pred):
+            skeleton = 1.0 if _timed_simplify(sk_true - sk_pred) == 0 else 0.0
+            if skeleton == 0.0 and _timed_equals(sk_true, sk_pred):
                 skeleton = 1.0
         except Exception:
             skeleton = 0.0
@@ -111,7 +166,7 @@ def symbolic_recovery(
     equiv = 0.0
     if true and pred:
         try:
-            diff = simplify(sympify(true) - sympify(_normalize_expr_str(pred)))
+            diff = _timed_simplify(sympify(true) - sympify(_normalize_expr_str(pred)))
             equiv = 1.0 if diff == 0 else 0.0
         except Exception:
             equiv = skeleton  # fall back
@@ -159,12 +214,59 @@ def eval_expression(
         return None
 
 
+def expression_safety(
+    expr: str,
+    X: np.ndarray,
+    variable_names: Sequence[str],
+    *,
+    extreme_threshold: float = 1e6,
+) -> Dict[str, float]:
+    """Best-effort singularity and extrapolation diagnostics for a fitted RHS."""
+    text = (expr or "").strip()
+    base = {
+        "has_tan": float(bool(re.search(r"\btan\s*\(", text))),
+        "has_division": float("/" in text),
+        "near_singularity": 0.0,
+        "extrapolation_valid": 0.0,
+        "extrapolation_extreme": 0.0,
+    }
+    if not text or np.asarray(X).ndim != 2 or len(X) == 0:
+        return base
+    X_arr = np.asarray(X, dtype=float)
+    center = np.mean(X_arr, axis=0, keepdims=True)
+    X_ext = center + 1.5 * (X_arr - center)
+    with np.errstate(all="ignore"):
+        pred_ext = eval_expression(text, X_ext, variable_names)
+    if pred_ext is not None:
+        base["extrapolation_valid"] = 1.0
+        base["extrapolation_extreme"] = float(np.max(np.abs(pred_ext)) > extreme_threshold)
+    try:
+        from sympy import denom, lambdify, together
+
+        denominator = denom(together(sympify(text.replace("constant", "1.0"))))
+        if denominator != 1:
+            fn = lambdify(["x_1", "x_2", "x_3"], denominator, modules=["numpy"])
+            padded = np.zeros((X_ext.shape[0], 3), dtype=float)
+            padded[:, : min(3, X_ext.shape[1])] = X_ext[:, :3]
+            with np.errstate(all="ignore"):
+                values = np.asarray(fn(padded[:, 0], padded[:, 1], padded[:, 2]), dtype=float)
+            values = np.broadcast_to(values, (X_ext.shape[0],)).ravel()
+            base["near_singularity"] = float(
+                not np.all(np.isfinite(values)) or np.min(np.abs(values)) < 1e-6
+            )
+    except Exception:
+        base["near_singularity"] = 1.0 if base["has_division"] else 0.0
+    return base
+
+
 def score_prediction(
     y_true: np.ndarray,
     y_pred: Optional[np.ndarray],
     predicted_expr: str,
     true_vars: Sequence[str],
     true_expr: str = "",
+    X: Optional[np.ndarray] = None,
+    variable_names: Optional[Sequence[str]] = None,
 ) -> Dict[str, float]:
     if y_pred is None:
         sr = symbolic_recovery(true_expr, predicted_expr) if true_expr else {
@@ -173,7 +275,7 @@ def score_prediction(
             "equiv": 0.0,
             "recovery": 0.0,
         }
-        return {
+        result = {
             "nmse": float("inf"),
             "nmse_var": float("inf"),
             "r2": float("-inf"),
@@ -187,6 +289,9 @@ def score_prediction(
             "sym_equiv": sr["equiv"],
             "sym_recovery": sr["recovery"],
         }
+        if X is not None:
+            result.update(expression_safety(predicted_expr, X, variable_names or true_vars))
+        return result
     vr = variable_recovery(true_vars, predicted_expr)
     sr = symbolic_recovery(true_expr, predicted_expr) if true_expr else {
         "exact": 0.0,
@@ -194,7 +299,7 @@ def score_prediction(
         "equiv": 0.0,
         "recovery": 0.0,
     }
-    return {
+    result = {
         "nmse": nmse(y_true, y_pred),
         "nmse_var": nmse_vs_variance(y_true, y_pred),
         "r2": r2_score(y_true, y_pred),
@@ -208,3 +313,6 @@ def score_prediction(
         "sym_equiv": sr["equiv"],
         "sym_recovery": sr["recovery"],
     }
+    if X is not None:
+        result.update(expression_safety(predicted_expr, X, variable_names or true_vars))
+    return result

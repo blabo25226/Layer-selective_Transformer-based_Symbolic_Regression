@@ -293,6 +293,8 @@ def predict_equation_tpsr(
             dp=dp,
             width=params.width,
             reuse_tree=True,
+            alg=params.uct_alg,
+            ucb_base=params.ucb_base,
         )
 
         done = False

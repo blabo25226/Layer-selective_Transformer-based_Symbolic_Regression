@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -21,13 +22,29 @@ from evaluation.equation_metrics import (  # noqa: E402
     score_prediction,
 )
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
+from experiment_runtime import phase_output_paths  # noqa: E402
 
-DATA_DIR = ROOT / "results" / "synthetic" / "phase1_v1"
-OUT_DIR = ROOT / "results" / "phase_results" / "phase2"
-REPORT = ROOT / "results" / "phase_results" / "phase2_report.md"
-WEIGHTS = ROOT / "NSRS" / "weights" / "10M.ckpt"
-CONFIG = ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml"
-EQ_SETTING = ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json"
+DATA_DIR = Path(
+    os.environ.get(
+        "LTSR_PHASE1_DATA",
+        str(ROOT / "results" / "synthetic" / "phase1_v1"),
+    )
+)
+OUT_DIR, REPORT = phase_output_paths(ROOT, "phase2", "phase2_report.md")
+WEIGHTS = Path(
+    os.environ.get("LTSR_WEIGHTS", str(ROOT / "NSRS" / "weights" / "10M.ckpt"))
+)
+CONFIG = Path(
+    os.environ.get(
+        "LTSR_CONFIG", str(ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml")
+    )
+)
+EQ_SETTING = Path(
+    os.environ.get(
+        "LTSR_EQ_SETTING",
+        str(ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json"),
+    )
+)
 
 
 def make_extrapolation_X(X: np.ndarray, rng: np.random.Generator) -> np.ndarray:
