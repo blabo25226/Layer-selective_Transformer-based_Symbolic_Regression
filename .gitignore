@@ -3,19 +3,55 @@
 /data/
 **/weights/
 
-# Python/build artifacts
+# Python caches, test output, and build artifacts
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
 .coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+site/
+
+# Local Python environments and secrets
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Notebook, editor, and operating-system artifacts
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*~
+*.bak
+*.tmp
+
+# Training logs and large model artifacts
+*.log
+wandb/
+lightning_logs/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.tar.gz
 
 # Local experiment artifacts
 results/runs/
 results/archives/
-# Downloaded immutable GPU-run archives and their extracted staging copies.
-results/GPU_RUN1_drive/*
-!results/GPU_RUN1_drive/.gitkeep
+results/GPU_RUN1_drive/
 # Smoke runs are throwaway; keeping them untracked would block the next campaign,
 # which requires a completely clean working tree.
 graphs/*_smoke/
@@ -24,9 +60,3 @@ results/published/*_smoke/
 results/synthetic/_test_tmp/
 .claude/*
 !.claude/settings.json
-
-# Local third-party drops (not vendored; install via pip where applicable)
-/LogicGEP/
-/PySR/
-/dynGENIE3/
-/pySINDy/
