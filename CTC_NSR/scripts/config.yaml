@@ -1,0 +1,221 @@
+# Need to point to the correct paths
+train_path: train_datasets/dataset_training_normal/datasets/10000000
+benchmark_path: validation_datasets/benchmark_normal
+
+
+
+max_description_seq_len: 500
+
+
+### Checkpointing
+checkpointing: True  
+number_of_test: 20
+name: results
+####
+
+### Test (Not influence the training)
+model_path: ??
+### 
+
+
+# Training parameters
+num_of_workers: 10
+check_val_every_n_epoch: 1 # Number of epochs between each benchmarking
+save_checkpoint_every_n_epoch: 5
+batch_size: 200
+num_sanity_val_steps: 0 # Number of sanity validation steps
+epochs: 10000
+precision: 16
+gpu: 1 # Number of the gpu to use 
+resume_from_checkpoint: ""
+is_debug: False # Should be always False, used for checking the code.
+
+
+
+path_to_candidate: configs/equations_ops_3_5000.json # This is the file that contains the negative equations from which the model will sample the absent branches
+path_to_candidate_nopow: configs/equations_nopow.json
+
+base_model: nsr
+adaptor: False
+freeze_num_encoder: True
+decoder_top: 0
+decoder_bottom: 4
+freeze_decoder: False
+
+lora_train: False
+lora_inference: False
+lora_r_train : 8
+lora_r_inference: 8
+
+orthogonal_constraint: False
+orthogonal_lambda: 0.1
+
+save_train_data: False
+save_frequency: 50000        #save one in x equations
+
+no_positional_embeddings: False
+
+
+testing:
+  left: 0
+  right: 0
+  model: nsr
+  test_set: train_wc
+  experiment_mode: vanilla
+  seed: 21
+  noise_applied: 0.0
+  beam_size: 5               #tpsr beam size is defined below
+  number_of_points: 100
+  pruning_option: ""         #specify names of vector set to prune
+  decoder_lens_option: ""    #specify layers to skip
+  num_loops: 30
+  save_file_name: ""
+
+  tpsr: False
+
+  hyperparam_tuning: False
+  hyperparam_tuning_n_calls: 40
+#hyperparams
+  random_sampling_param: 2.46
+  R2_border: 0.213
+  
+  max_positive_candidates: 39
+  num_random_candidates: 9
+  max_length_l0: 15.58
+  max_length_alpha: 0.42
+  max_branch_length: 9
+
+
+
+result_options:
+  save_results: False
+  plot: False
+  save_Zn: False
+  save_Zs: False
+  save_name: ""  #just for saving Zn, should be always ""
+
+debug: False
+reverse: False
+prepend_conditioning: False
+prepend_conditioning_during_inference: False
+ensemble_totals: 1
+ensemble_current: 0
+
+
+
+tpsr_params:
+  debug: False
+  device: ""
+
+  width: 3
+  num_beams: 1
+  horizon: 200
+  no_seq_cache: True
+  no_prefix_cache: True
+  beam_length_penalty: 1
+  train_value: False
+  rollout: 3
+  
+  sample_only: False
+
+
+
+dataset:
+  epoch_len: 100000 # Number of equations per epoch
+  total_variables: #Do not fill
+  total_coefficients: #Do not fill
+  max_number_of_points: 1000 
+  type_of_sampling_points: uniform
+  fun_support:
+    max: 10
+    min: -10
+    min_len: 1
+  constants:
+    enabled: True
+    num_constants: 6
+    additive:
+      max: 10
+      min: -10
+    multiplicative:
+      max: 10
+      min: 0.05
+  number_of_complexity_classes: 30 # Hard coded in the code at the moment 1405:config.py
+  conditioning: 
+    mode: "all" # all -> Conditionings will be generated in the __getitem__ method and passed to the model
+                # positive -> Used when only generating positive conditionings (when the model generates positives itself, rarely used)
+                # None -> Conditionings will not be generated nor passed to the model. 
+                # Note that this option has to be consistent with the architecture.conditioning option
+    name: "train" # Or it is filled from the validation
+    prob_symmetry: 0.2
+    prob_complexity: 0.3
+    positive:
+      prob: 0.3
+      min_percent: 0
+      max_percent: 1
+      prob_pointers: 0.15 # Probability of replacing a number with a pointer
+    negative:
+      prob: 0.3
+      min_percent: 0
+      max_percent: 1      
+      k: 4
+      sampling_type: 2
+
+
+architecture:
+  sinuisodal_embeddings: False
+  dec_pf_dim: 512
+  dec_layers: 5
+  dim_hidden: 512 #512
+  lr: 0.0001
+  dropout: 0
+  cond_num_layers: 3
+  num_features: 32
+  ln: True
+  N_p: 0
+  num_inds: 100
+  activation: "relu"
+  bit16: True
+  norm: True
+  linear: False
+  input_normalization: False
+  src_pad_idx: 0
+  trg_pad_idx: 0
+  length_eq: 60
+  n_l_enc: 5
+  mean: 0.5  
+  std: 0.5 
+  dim_input: 6
+  num_heads: 8
+  number_possible_tokens: 80
+  num_tokens_condition: 150 # Conditional encoder
+  embedding_dim_condition: 512
+  conditioning: dec
+  concat: True
+  predict_constants: c # Can be False or "c"
+  wupsteps: 4000
+
+
+inference:
+  beam_size: 10 # Used in validation
+  word2id: ?? # During training is overwritten
+  id2word: ?? # During training is overwritten
+  total_variables: ?? # Variable used in the inference
+  n_jobs: 1
+  bfgs:
+    activated: False
+    not_activated_no_fit: True
+    n_restarts: 10
+    add_coefficients_if_not_existing: False
+    normalization_o: False
+    idx_remove: True
+    normalization_type: MSE
+    stop_time: 1e9
+  
+  
+
+# @package _group_
+hydra:
+  run:
+    dir: run/${architecture.predict_constants}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+      dir: runs/${architecture.predict_constants}/${now:%Y-%m-%d}/${now:%H-%M-%S}

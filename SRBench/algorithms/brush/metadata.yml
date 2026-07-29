@@ -1,0 +1,12 @@
+authors: # the participants
+  - William La Cava
+  - Joseph D. Romano
+  - Guilherme Imai Aldeia
+  - Fabricio Olivetti de Franca
+email: william.lacava@childrens.harvard.edu
+name: Brush
+description: |
+  An interpretable machine learning library
+url: https://github.com/cavalab/brush
+build:
+  clone_base_env: yes

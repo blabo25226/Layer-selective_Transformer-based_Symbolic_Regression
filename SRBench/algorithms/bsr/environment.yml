@@ -1,0 +1,8 @@
+channels:
+    - conda-forge
+dependencies:
+    - python=3.*
+    - scikit-learn
+    - pandas=1.1.*
+    - matplotlib
+    - pip

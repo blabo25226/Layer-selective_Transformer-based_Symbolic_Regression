@@ -1,0 +1,19 @@
+FROM mambaorg/micromamba:1.5.8
+
+USER root
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN sed -i -e "s/http/https/" /etc/apt/sources.list.d/debian.sources \
+    && apt update \
+    && apt install -y \
+        rsync \
+        curl \
+        git \
+        build-essential \
+        libgmp3-dev \
+        libblas-dev \
+        liblapack-dev \
+        libgsl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER $MAMBA_USER

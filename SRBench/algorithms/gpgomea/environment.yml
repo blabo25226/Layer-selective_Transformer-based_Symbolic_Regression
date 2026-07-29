@@ -1,0 +1,22 @@
+name: gpg
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - make=4.4.1
+  - cmake=3.30.3
+  - eigen=3.4.0
+  - numpy=1.26.4
+  - python-devtools=0.9.0
+  - pybind11=2.13.6
+  - pip=24.2
+  - pip:
+    - pandas
+    - scikit-learn
+    - setuptools<82 # stopit hasnt been updated in pipy since 2018. it relies on pkg_sources, which was removed from setuptools dependency. Beginning Feb 8th, 2026 with setuptools>=82, pkg_resources has been removed
+    - stopit
+    - sympy
+    # - functorch==2.0.0
+    # - sympytorch==0.1.4
+    # - torch==2.0.1

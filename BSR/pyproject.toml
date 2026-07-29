@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "transformer"
+version = "0.1.0"
+description = "A transformer implementation"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "torch",
+    "pandas",
+    "scikit-learn",
+    "matplotlib",
+    "tqdm",
+    "pytorch-lightning",
+    "boolean.py",
+    "timeout_decorator",
+    "wandb",
+    "protobuf"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "isort",
+    "flake8"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
