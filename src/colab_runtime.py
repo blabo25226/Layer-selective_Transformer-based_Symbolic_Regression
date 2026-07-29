@@ -129,6 +129,11 @@ class ColabRunConfig:
             "START_PHASE": str(phase),
             "STOP_AFTER_PHASE": str(phase),
             "LTSR_DECODE_TIMEOUT_SEC": str(self.decode_timeout_sec),
+            # Phase 8 uses a uniform shorter cap from its first decode. PySR is
+            # run later on the local CPU and merged by aggregate_phase8_runs.
+            "LTSR_PHASE8_DECODE_TIMEOUT_SEC": "30",
+            "LTSR_PHASE8_PYSR": "0",
+            "LTSR_PHASE8_PYSR_ITERS": "12",
             # Operational RAM guard only: target checkpoints restore the exact
             # RNG state, so recycling the worker does not change the experiment.
             "LTSR_PHASE7_TARGET_EVAL_BUDGET": "60",

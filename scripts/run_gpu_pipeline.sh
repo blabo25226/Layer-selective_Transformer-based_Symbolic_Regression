@@ -29,6 +29,9 @@ START_PHASE=${START_PHASE:-4}
 STOP_AFTER_PHASE=${STOP_AFTER_PHASE:-8}
 LTSR_DECODE_TIMEOUT_SEC=${LTSR_DECODE_TIMEOUT_SEC:-240}
 LTSR_PHASE7_TARGET_EVAL_BUDGET=${LTSR_PHASE7_TARGET_EVAL_BUDGET:-0}
+LTSR_PHASE8_DECODE_TIMEOUT_SEC=${LTSR_PHASE8_DECODE_TIMEOUT_SEC:-30}
+LTSR_PHASE8_PYSR=${LTSR_PHASE8_PYSR:-$PYSR}
+LTSR_PHASE8_PYSR_ITERS=${LTSR_PHASE8_PYSR_ITERS:-40}
 
 # --- Speed / robustness knobs (default values reproduce the original behavior) ---
 # MAX_PARALLEL_SEEDS>1 runs the per-seed loops of phases 4/5/6/7/8 concurrently.
@@ -70,6 +73,8 @@ export LTSR_MAX_PARALLEL_SEEDS="$MAX_PARALLEL_SEEDS" LTSR_RESUME="$RESUME"
 export LTSR_STRICT_RESUME="$STRICT_RESUME"
 export LTSR_DECODE_TIMEOUT_SEC
 export LTSR_PHASE7_TARGET_EVAL_BUDGET
+export LTSR_PHASE8_DECODE_TIMEOUT_SEC LTSR_PHASE8_PYSR
+export LTSR_PHASE8_PYSR_ITERS
 
 : "${LTSR_WEIGHTS:?Set LTSR_WEIGHTS to the GPU checkpoint path}"
 export LTSR_CONFIG=${LTSR_CONFIG:-"$PWD/NSRS/jupyter/100M/config.yaml"}
@@ -192,6 +197,8 @@ echo "max_parallel_seeds=$MAX_PARALLEL_SEEDS resume=$RESUME strict_resume=$STRIC
 echo "phase_range=$START_PHASE..$STOP_AFTER_PHASE dream4_shards=$DREAM4_SHARD_NETWORKS"
 echo "noise=$NOISE decode_timeout_sec=$LTSR_DECODE_TIMEOUT_SEC"
 echo "phase7_target_eval_budget=$LTSR_PHASE7_TARGET_EVAL_BUDGET"
+echo "phase8_decode_timeout_sec=$LTSR_PHASE8_DECODE_TIMEOUT_SEC"
+echo "phase8_pysr=$LTSR_PHASE8_PYSR phase8_pysr_iters=$LTSR_PHASE8_PYSR_ITERS"
 
 if [ "$START_PHASE" -le 4 ]; then
   if [ "$RESUME" = "1" ] && [ -d "$DATA" ]; then
@@ -376,9 +383,10 @@ fi
 run_phase8_seed() {
   local seed="$1"
   _resume_skip "$LTSR_RUN_DIR/phase8_lodo_seed${seed}/lodo_results.json" "Phase8 seed${seed}" && return 0
-  if [ "$PYSR" = "1" ]; then
+  if [ "$LTSR_PHASE8_PYSR" = "1" ]; then
     LTSR_PHASE_TAG="seed${seed}" "${PY_CMD[@]}" scripts/phase8_lodo.py \
-      --seed "$seed" --epochs "$EPOCHS" --with-pysr --pysr-iters 40
+      --seed "$seed" --epochs "$EPOCHS" --with-pysr \
+      --pysr-iters "$LTSR_PHASE8_PYSR_ITERS"
   else
     LTSR_PHASE_TAG="seed${seed}" "${PY_CMD[@]}" scripts/phase8_lodo.py \
       --seed "$seed" --epochs "$EPOCHS"
