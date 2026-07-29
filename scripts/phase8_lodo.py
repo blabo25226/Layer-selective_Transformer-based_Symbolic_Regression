@@ -16,7 +16,9 @@ reused across folds. Runs in the NeSymReS environment (Colab):
 from __future__ import annotations
 
 import argparse
+import gc
 import json
+import os
 import random
 import sys
 import time
@@ -54,19 +56,83 @@ from phase8_run_human import (  # noqa: E402
     _HC_SOURCE,
     _PHASE4_CONTRIB,
     build_dreamlike_ft,
-    eval_holdout_donor,
     eval_sr,
     fmt,
     make_light_fit,
     run_pysr,
+    score_holdout_from_decoded,
     stack_donor_derivatives,
 )
 
 OUT_DIR, REPORT = phase_output_paths(ROOT, "phase8_lodo", "phase8_lodo_report.md")
+DECODE_TIMEOUT_SEC = float(
+    os.environ.get(
+        "LTSR_PHASE8_DECODE_TIMEOUT_SEC",
+        os.environ.get("LTSR_DECODE_TIMEOUT_SEC", "30"),
+    )
+)
 
 
 def log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def _fold_checkpoint_identity(args, donors: List[str]) -> Dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "seed": args.seed,
+        "donors": donors,
+        "derivative": args.derivative,
+        "k": args.k,
+        "max_vars": args.max_vars,
+        "epochs": args.epochs,
+        "lr": args.lr,
+        "with_pysr": args.with_pysr,
+        "pysr_iters": args.pysr_iters,
+        "decode_timeout_sec": DECODE_TIMEOUT_SEC,
+        "selected_layers": list(HIGH_CONTRIB),
+    }
+
+
+def _save_fold_checkpoint(
+    path: Path,
+    *,
+    identity: Dict[str, Any],
+    folds: List[Dict[str, Any]],
+    per_fold_detail: List[Dict[str, Any]],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".partial")
+    partial.write_text(
+        json.dumps(
+            {
+                "identity": identity,
+                "folds": folds,
+                "per_fold_detail": per_fold_detail,
+            },
+            indent=2,
+            default=lambda value: None,
+        ),
+        encoding="utf-8",
+    )
+    os.replace(partial, path)
+
+
+def _load_fold_checkpoint(
+    path: Path, identity: Dict[str, Any]
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    if not path.is_file():
+        return [], []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("identity") != identity:
+        raise RuntimeError(
+            "Phase 8 fold checkpoint configuration mismatch; use a new run_id"
+        )
+    folds = payload.get("folds", [])
+    details = payload.get("per_fold_detail", [])
+    if len(folds) != len(details):
+        raise RuntimeError("Phase 8 fold checkpoint has inconsistent lengths")
+    return folds, details
 
 
 def pysr_fold(prior_probs, prior_sel, panel, X_te, Y_te, max_vars, niters) -> Dict[str, float]:
@@ -181,9 +247,27 @@ def main() -> int:
     train_selective(dreamlike_model, dl_loader, HIGH_CONTRIB, epochs=args.epochs, lr=args.lr, device=device)
     log(f"Selective FT layers: {HIGH_CONTRIB}")
 
-    folds: List[Dict[str, Dict[str, float]]] = []
-    per_fold_detail: List[Dict[str, Any]] = []
-    for hold in donors:
+    checkpoint_path = OUT_DIR / "fold_checkpoint.json"
+    checkpoint_identity = _fold_checkpoint_identity(args, donors)
+    folds, per_fold_detail = _load_fold_checkpoint(
+        checkpoint_path, checkpoint_identity
+    )
+    completed_holds = [str(row["holdout"]) for row in per_fold_detail]
+    if completed_holds:
+        log(f"Resuming completed donor folds: {completed_holds}")
+
+    for fold_index, hold in enumerate(donors):
+        if hold in completed_holds:
+            log(f"  holdout={hold}: checkpoint complete, skipping")
+            continue
+        # A fold-local seed makes a resumed run identical to uninterrupted
+        # execution instead of depending on how many earlier folds ran.
+        fold_seed = args.seed * 1000 + fold_index
+        random.seed(fold_seed)
+        np.random.seed(fold_seed)
+        torch.manual_seed(fold_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(fold_seed)
         t0 = time.time()
         train_donors = [d for d in donors if d != hold]
         X_tr, Y_tr = stack_donor_derivatives(panel, args.derivative, train_donors)
@@ -193,15 +277,19 @@ def main() -> int:
         )
 
         fold: Dict[str, Dict[str, float]] = {}
-        for name, model in [
-            ("pretrained_beam", clone_model(base_model)),
-            ("selective_beam", dreamlike_model),
-        ]:
+        for name in ("pretrained_beam", "selective_beam"):
+            model = (
+                clone_model(base_model)
+                if name == "pretrained_beam"
+                else dreamlike_model
+            )
             model.eval()
             inn = eval_sr(
                 model, fit, prior_probs, decode="beam", source_names=panel.gene_names
             )
-            hd = eval_holdout_donor(model, fit, panel, prior_probs, prior_sel, X_te, Y_te, decode="beam")
+            hd = score_holdout_from_decoded(
+                panel, prior_probs, prior_sel, X_te, Y_te, inn
+            )
             fold[name] = {
                 "in": inn["aggregate"]["penalized_nmse"],
                 "hold": hd["aggregate"]["penalized_nmse"],
@@ -214,12 +302,30 @@ def main() -> int:
                 "in_per_problem": inn["per_problem"],
                 "hold_per_problem": hd["per_problem"],
             }
+            if name == "pretrained_beam":
+                del model
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         if args.with_pysr:
             fold["pysr"] = pysr_fold(prior_probs, prior_sel, panel, X_te, Y_te, args.max_vars, args.pysr_iters)
 
         folds.append(fold)
-        per_fold_detail.append({"holdout": hold, "n_targets": len(prior_probs), **fold})
+        per_fold_detail.append(
+            {
+                "holdout": hold,
+                "fold_seed": fold_seed,
+                "n_targets": len(prior_probs),
+                **fold,
+            }
+        )
+        _save_fold_checkpoint(
+            checkpoint_path,
+            identity=checkpoint_identity,
+            folds=folds,
+            per_fold_detail=per_fold_detail,
+        )
         log(
             f"  holdout={hold}: "
             + "  ".join(f"{m}(in={fmt(v['in'])},hold={fmt(v['hold'])})" for m, v in fold.items())
@@ -236,6 +342,9 @@ def main() -> int:
                 "layer_selection_rule": _HC_RULE,
                 "phase4_contributions": str(_PHASE4_CONTRIB),
                 "seed": args.seed,
+                "decode_timeout_sec": DECODE_TIMEOUT_SEC,
+                "decode_reuse": "one training decode scored in-donor and holdout",
+                "pysr_iterations": args.pysr_iters if args.with_pysr else 0,
                 "per_fold": per_fold_detail,
                 "aggregate": agg,
             },

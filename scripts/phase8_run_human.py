@@ -42,8 +42,10 @@ from data.human import (  # noqa: E402
 )
 from data.regulator_selection import oracle_regulators  # noqa: E402
 from data.synthetic_grn import SampledDataset  # noqa: E402
+from baselines.pysr_runner import fit_pysr_expression  # noqa: E402
 from evaluation.equation_metrics import eval_expression, score_prediction  # noqa: E402
 from evaluation.aggregation import aggregate_prediction_scores  # noqa: E402
+from evaluation.decode_timeout import decode_time_limit  # noqa: E402
 from evaluation.equation_records import dataset_variable_mapping, make_equation_record  # noqa: E402
 from experiment_runtime import phase_output_paths  # noqa: E402
 from models.nesymres_adapter import load_nesymres, predict_equation  # noqa: E402
@@ -62,6 +64,12 @@ WEIGHTS = Path(os.environ.get("LTSR_WEIGHTS", str(ROOT / "NSRS" / "weights" / "1
 CONFIG = Path(os.environ.get("LTSR_CONFIG", str(ROOT / "NSRS" / "jupyter" / "100M" / "config.yaml")))
 EQ_SETTING = Path(os.environ.get("LTSR_EQ_SETTING", str(ROOT / "NSRS" / "jupyter" / "100M" / "eq_setting.json")))
 OUT_DIR, REPORT = phase_output_paths(ROOT, "phase8", "phase8_report.md")
+DECODE_TIMEOUT_SEC = float(
+    os.environ.get(
+        "LTSR_PHASE8_DECODE_TIMEOUT_SEC",
+        os.environ.get("LTSR_DECODE_TIMEOUT_SEC", "30"),
+    )
+)
 
 from training.selective_layers import (  # noqa: E402
     require_live_phase4_ranking,
@@ -176,7 +184,7 @@ def eval_sr(
         out: Dict[str, Any] = {}
         failure_reason = None
         try:
-            with warnings.catch_warnings():
+            with warnings.catch_warnings(), decode_time_limit(DECODE_TIMEOUT_SEC):
                 warnings.simplefilter("ignore")
                 if decode == "beam":
                     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
@@ -264,7 +272,7 @@ def eval_holdout_donor(
         out: Dict[str, Any] = {}
         failure_reason = None
         try:
-            with warnings.catch_warnings():
+            with warnings.catch_warnings(), decode_time_limit(DECODE_TIMEOUT_SEC):
                 warnings.simplefilter("ignore")
                 if decode == "beam":
                     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
@@ -308,21 +316,93 @@ def eval_holdout_donor(
     }
 
 
-def run_pysr(X, y, variable_names, niterations: int) -> str:
-    from pysr import PySRRegressor
+def score_holdout_from_decoded(
+    panel,
+    train_problems: List[SampledDataset],
+    selections: Dict[int, List[int]],
+    X_te: np.ndarray,
+    Y_te: np.ndarray,
+    decoded: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Score already-decoded training equations on a held-out donor.
 
-    model = PySRRegressor(
+    Equation discovery must use only the training donors. Reusing that exact
+    equation for held-out scoring is both cheaper and methodologically cleaner
+    than running the stochastic decoder a second time.
+    """
+    network = panel.as_grn_like()
+    decoded_by_id = {
+        str(row.get("eq_id")): row for row in decoded.get("per_problem", [])
+    }
+    rows = []
+    for ds in train_problems:
+        source = decoded_by_id.get(str(ds.spec.eq_id))
+        if source is None:
+            raise ValueError(f"missing decoded training equation: {ds.spec.eq_id}")
+
+        motif = ds.spec.motif or ""
+        tname = motif.split("target=")[-1].split(";")[0] if "target=" in motif else ""
+        if tname not in panel.gene_names:
+            continue
+        target = panel.gene_index(tname)
+        te = build_local_problem(
+            network,
+            X_te,
+            Y_te[:, target],
+            target,
+            selections.get(target, []),
+            eq_id=f"{ds.spec.eq_id}_holdout",
+            split="holdout",
+            include_target=True,
+            max_vars=3,
+            selection_method=ds.spec.selection_method
+            if hasattr(ds.spec, "selection_method")
+            else "prior",
+        )
+        expr = str(source.get("pred_raw") or source.get("pred") or "")
+        y_hat = eval_expression(expr, te.X, te.spec.variable_names) if expr else None
+        scores = score_prediction(
+            te.y,
+            y_hat,
+            expr,
+            te.spec.variable_names,
+            true_expr="",
+            X=te.X,
+            variable_names=te.spec.variable_names,
+        )
+        rows.append(
+            make_equation_record(
+                eq_id=te.spec.eq_id,
+                predicted_expr=expr,
+                variable_names=te.spec.variable_names,
+                mapping=dataset_variable_mapping(te, panel.gene_names),
+                scores=scores,
+                true_expr="",
+                candidate_expressions=source.get("candidate_expressions", []),
+                decoder=str(source.get("decoder", "nesymres_beam_bfgs")),
+                decoder_metadata=source.get("decoder_metadata", {}),
+                failure_reason=source.get("failure_reason") if not expr else None,
+                target=tname,
+                reused_training_decode=True,
+                training_eq_id=str(ds.spec.eq_id),
+            )
+        )
+    return {
+        "aggregate": aggregate_prediction_scores(rows),
+        "per_problem": rows,
+    }
+
+
+def run_pysr(
+    X, y, variable_names, niterations: int, *, random_state: int = 0
+) -> str:
+    return fit_pysr_expression(
+        X,
+        y,
+        variable_names,
         niterations=niterations,
-        binary_operators=["+", "-", "*", "/"],
-        unary_operators=["square"],
-        maxsize=20,
-        progress=False,
-        verbosity=0,
-        temp_equation_file=True,
-        random_state=0,
+        random_state=random_state,
     )
-    model.fit(X, y, variable_names=list(variable_names))
-    return str(model.get_best()["equation"])
 
 
 def main() -> int:
@@ -456,16 +536,13 @@ def main() -> int:
             model, fit, prior_probs, decode=decode, tpsr_kw=tpsr_kw,
             source_names=panel.gene_names,
         )
-        holdout = eval_holdout_donor(
-            model,
-            fit,
+        holdout = score_holdout_from_decoded(
             panel,
             prior_probs,
             prior_sel,
             X_te,
             Y_te,
-            decode=decode,
-            tpsr_kw=tpsr_kw,
+            inn,
         )
         inn["elapsed_sec"] = time.time() - t0
         compare_in[name] = inn

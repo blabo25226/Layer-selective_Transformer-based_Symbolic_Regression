@@ -33,7 +33,30 @@ def main() -> int:
         path = args.run_dir / f"phase8_lodo_seed{seed}" / "lodo_results.json"
         if not path.is_file():
             parser.error(f"missing Phase 8 result: {path}")
-        runs.append(json.loads(path.read_text(encoding="utf-8")))
+        run = json.loads(path.read_text(encoding="utf-8"))
+        pysr_path = (
+            args.run_dir
+            / f"phase8_pysr_seed{seed}"
+            / "pysr_results.json"
+        )
+        if pysr_path.is_file():
+            pysr = json.loads(pysr_path.read_text(encoding="utf-8"))
+            if int(pysr.get("seed", -1)) != seed:
+                parser.error(f"PySR seed mismatch: {pysr_path}")
+            run.setdefault("aggregate", {}).update(pysr.get("aggregate", {}))
+            pysr_folds = {
+                str(fold["holdout"]): fold["pysr"]
+                for fold in pysr.get("per_fold", [])
+            }
+            for fold in run.get("per_fold", []):
+                holdout = str(fold["holdout"])
+                if holdout not in pysr_folds:
+                    parser.error(
+                        f"missing PySR holdout {holdout}: {pysr_path}"
+                    )
+                fold["pysr"] = pysr_folds[holdout]
+            run["pysr_source"] = str(pysr_path)
+        runs.append(run)
     methods = sorted(set.intersection(*(set(run["aggregate"]) for run in runs)))
     summary = {}
     for method in methods:
@@ -57,7 +80,11 @@ def main() -> int:
                 finite = [v for v in fold_values if math.isfinite(v)]
                 values.append(sum(finite) / len(finite) if finite else float("nan"))
             summary[method][metric] = {**_ci95(values), "values": values}
-    output = {"seeds": args.seeds, "summary": summary}
+    output = {
+        "seeds": args.seeds,
+        "summary": summary,
+        "pysr_included": "pysr" in methods,
+    }
     out_dir = args.run_dir / "phase8_lodo_multiseed"
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "summary.json").write_text(json.dumps(safe(output), indent=2), encoding="utf-8")

@@ -114,6 +114,35 @@ def fail(run: Path, errors: list[str]) -> int:
     return 2
 
 
+def resolve_dream4_networks(
+    run: Path, planned_networks: list[int]
+) -> tuple[list[int], dict | None]:
+    """Accept an explicitly documented compute-budget curtailment."""
+    summary_path = run / "phase7_multiseed" / "summary.json"
+    curtailment_path = run / "phase7_multiseed" / "curtailment.json"
+    if not summary_path.is_file():
+        return planned_networks, None
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    scope = summary.get("execution_scope")
+    if not isinstance(scope, dict):
+        return planned_networks, None
+    included = [int(value) for value in scope.get("included_networks", [])]
+    if included == planned_networks:
+        return planned_networks, scope
+    if not included or not set(included).issubset(planned_networks):
+        raise ValueError("invalid curtailed Phase 7 included_networks")
+    if [int(value) for value in scope.get("planned_networks", [])] != planned_networks:
+        raise ValueError("curtailed Phase 7 planned_networks mismatch")
+    if not scope.get("reason") or not scope.get("selection_rule"):
+        raise ValueError("curtailed Phase 7 scope lacks reason or selection_rule")
+    if not curtailment_path.is_file():
+        raise ValueError(f"missing Phase 7 curtailment record: {curtailment_path}")
+    curtailment = json.loads(curtailment_path.read_text(encoding="utf-8"))
+    if curtailment != scope:
+        raise ValueError("Phase 7 curtailment.json does not match summary scope")
+    return included, scope
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", type=Path, required=True)
@@ -126,12 +155,21 @@ def main() -> int:
     if manifest.get("status") not in RESUMABLE_STATUSES:
         parser.error(f"pipeline did not finish: status={manifest.get('status')}")
     dream4 = manifest.get("parameters", {}).get("LTSR_DREAM4") == "1"
-    dream4_networks = [
+    planned_dream4_networks = [
         int(value)
         for value in manifest.get("parameters", {})
         .get("LTSR_DREAM4_NETWORKS", "1 2 3 4 5")
         .split()
     ]
+    phase7_scope = None
+    dream4_networks = planned_dream4_networks
+    if dream4:
+        try:
+            dream4_networks, phase7_scope = resolve_dream4_networks(
+                run, planned_dream4_networks
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return fail(run, [f"invalid Phase 7 execution scope: {exc}"])
     required = [
         run / "phase4_multiseed" / "contrib_aggregate.json",
         run / "phase4_multiseed" / "absolute_improvements_aggregate.json",
@@ -223,6 +261,7 @@ def main() -> int:
         "per_problem_groups": groups,
         "per_problem_rows": rows,
         "equation_schema": "v1",
+        "phase7_execution_scope": phase7_scope,
     }
     (run / "validation.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     record_stage(run / "manifest.json", "validation", "complete")
