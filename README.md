@@ -1,7 +1,9 @@
 # LTSR研究：層選択型シンボリック回帰による遺伝子制御方程式の推定
 
-> **現在地（2026年7月）**：CPU上で研究パイプラインと小規模な予備実験を完了した段階である。
-> GPUを用いた多seed・大規模実験は未実施であり、以下の数値は最終的な研究結論ではない。
+> **現在地（2026年7月30日）**：CPU pilotに加え、Google Colab ProのNVIDIA L4で
+> 3 seeds・noise 0.1のGPU_RUN1 reduced runをPhase 0–9まで完了した。
+> 少数decoder層の数値性能は全層fine-tuningと同等だったが、これは全network・統一budgetのpaper runではない。
+> 確定結果と限界は [`results/GPU_RUN1_report.md`](results/GPU_RUN1_report.md) を参照する。
 
 ## 目次
 
@@ -17,10 +19,10 @@
 - [3. 研究上の問い](#3-研究上の問い)
 - [4. 用語解説](#4-用語解説)
 - [5. 評価指標](#5-評価指標)
-- [6. CPU環境と実装状況](#6-cpu環境と実装状況)
+- [6. 実行環境と実装状況](#6-実行環境と実装状況)
 - [7. 実施したPhase](#7-実施したphase)
-- [8. CPU実験結果](#8-cpu実験結果)
-- [9. CPU研究から得られた結論](#9-cpu研究から得られた結論)
+- [8. CPU pilotとGPU_RUN1の結果](#8-cpu-pilotとgpu_run1の結果)
+- [9. CPU pilotとGPU_RUN1から得られた結論](#9-cpu-pilotとgpu_run1から得られた結論)
 - [10. 結果を読む際の重要な注意](#10-結果を読む際の重要な注意)
 - [11. 今後の展望](#11-今後の展望)
 - [12. 再現方法](#12-再現方法)
@@ -36,9 +38,9 @@
 
 遺伝子 $i$ の発現量を $x_i(t)$ とすると、その時間変化を
 
-$$
+```math
 \frac{dx_i}{dt}=f_i(x_1,x_2,\ldots,x_p)
-$$
+```
 
 と表せる。本研究の目標は、未知の関数 $f_i$ を、ニューラルネットワーク内部の読めない計算としてではなく、
 人間が読める数式として発見することである。
@@ -47,8 +49,10 @@ $$
 さらに、全パラメータを更新する代わりに、適応への寄与が大きい少数のTransformer層だけをfine-tuningする。
 推論時には必要に応じて **TPSR** による木探索を加え、非ニューラル手法 **PySR** と比較する。
 
-研究計画の詳細は [`plan/20260714_firstplan.md`](plan/20260714_firstplan.md)、GPU実験の手順は
-[`GPU_RUN.md`](GPU_RUN.md) に記載している。
+研究計画の詳細は [`plan/20260714_firstplan.md`](plan/20260714_firstplan.md)、GPU_RUN1の手順と実施記録は
+[`GPU_RUN1.md`](GPU_RUN1.md) に記載している。実施済みGPU_RUN1の結果は
+[`results/GPU_RUN1_report.md`](results/GPU_RUN1_report.md)、次の確認実験は
+[`plan/20260729_GPU_RUN2.md`](plan/20260729_GPU_RUN2.md) にまとめている。
 
 ## 2. 背景
 
@@ -63,10 +67,10 @@ GRNを知ることは、細胞が刺激に応答する仕組み、病気で制�
 
 合成データでは、生物学でよく使われる **Hill型制御**を主に扱った。活性化の例は
 
-$$
+```math
 \frac{dx_i}{dt}
 =\frac{\alpha x_j^n}{K^n+x_j^n}-\beta x_i
-$$
+```
 
 である。第1項は遺伝子 $j$ による生成、第2項は遺伝子 $i$ の分解を表す。
 
@@ -77,20 +81,20 @@ $$
 
 抑制の例は
 
-$$
+```math
 \frac{dx_i}{dt}
 =\frac{\alpha K^n}{K^n+x_j^n}-\beta x_i
-$$
+```
 
 である。$x_j$ が大きくなるほど第1項が小さくなるため、遺伝子 $j$ が遺伝子 $i$ を抑える。
 このように式が得られれば、制御の向きだけでなく、飽和、協同性、分解の強さまで議論できる可能性がある。
 
 実際の時系列データでは $dx/dt$ を直接観測できないため、隣接時点から有限差分で近似する。
 
-$$
+```math
 \left.\frac{dx}{dt}\right|_{t_k}
 \approx \frac{x(t_{k+1})-x(t_k)}{t_{k+1}-t_k}
-$$
+```
 
 ただし、測定時点が少ない場合やノイズが大きい場合、この近似自体が大きな誤差源になる。
 
@@ -98,18 +102,18 @@ $$
 
 通常の回帰は、直線や決められた形の式の係数を学習する。例えば線形回帰では
 
-$$
+```math
 \hat y=w_0+w_1x_1+w_2x_2
-$$
+```
 
-という形を人間が先に決め、 $w_0,w_1,w_2$ を求める。一方、**シンボリック回帰（Symbolic Regression; SR）** は、
+という形を人間が先に決め、 $w_0,w_1,w_2$ を求める。一方、 **シンボリック回帰（Symbolic Regression; SR）** は、
 係数だけでなく、足し算、掛け算、割り算、べき乗、三角関数などの組合せも探索する。
 
 データ集合を $`D=\{(\mathbf{x}_i,y_i)\}_{i=1}^{N}`$ 、使える数式の集合を $\mathcal{F}$ とすると、概念的には
 
-$$
+```math
 f^*=\underset{f\in\mathcal{F}}{\mathrm{arg\,min}}\left[\frac{1}{N}\sum_{i=1}^{N}\bigl(y_i-f(\mathbf{x}_i)\bigr)^2+\lambda C(f)\right]
-$$
+```
 
 を解く。 $C(f)$ は式の長さや演算子数などの複雑度、
 $\lambda$ は「精度」と「単純さ」のどちらを重視するかを決める値である。
@@ -122,9 +126,9 @@ $\lambda$ は「精度」と「単純さ」のどちらを重視するかを決�
 **Transformer**は、入力中のどの部分に注目するかを計算するattentionを中心としたニューラルネットワークである [1]。
 入力行列を $Q,K,V$ に変換するscaled dot-product attentionは、概略
 
-$$
+```math
 \mathrm{Attention}(Q,K,V)=\mathrm{softmax}\!\left(\frac{QK^{\mathsf T}}{\sqrt{d_k}}\right)V
-$$
+```
 
 で表される。Transformerは同じ形の層を複数積み重ねる。**encoder**は入力を内部表現へ変換し、
 **decoder**はその表現から出力列を1記号ずつ生成する。
@@ -132,9 +136,9 @@ $$
 **NeSymReS** は、大量の人工数式と、その数式から作った数値点集合を使ってTransformerを事前学習する手法である [2]。
 入力は順序を持たない点集合
 
-$$
+```math
 \{(\mathbf{x}_1,y_1),\ldots,(\mathbf{x}_N,y_N)\}
-$$
+```
 
 で、出力は数式を表すtoken列である。新しい問題を毎回ゼロから探索するのではなく、事前学習で得た
 「よく現れる数式の形」をprior（事前知識）として使える点が特徴である。
@@ -151,11 +155,11 @@ NeSymReS論文は、大規模な手続き生成データによる事前学習が
 層ごとに調べ、改善が少数の中間層へ集中する場合を報告した。層 $l$ だけを学習した損失を $L_l$、
 事前学習モデルを $L_{\mathrm{base}}$、全層学習を $L_{\mathrm{full}}$ とすると、損失が小さいほどよい場合の層寄与度を
 
-$$
+```math
 C_l=
 \frac{L_{\mathrm{base}}-L_l}
 {L_{\mathrm{base}}-L_{\mathrm{full}}}
-$$
+```
 
 のように表せる。 $C_l=1$ なら、その1層だけで全層学習と同程度の改善を回復したことになる。
 
@@ -171,9 +175,9 @@ $$
 本研究ではTPSRを別の学習モデルではなく、NeSymReSの数式生成を改善する推論時探索として扱う。
 概念的な報酬は、例えば
 
-$$
+```math
 R(f)=-\mathrm{NMSE}(f)-\lambda C(f)
-$$
+```
 
 と書ける。予測誤差が小さく、式も単純なほど報酬が高い。微分できない評価値を探索へ直接組み込めることが利点である。
 
@@ -285,29 +289,29 @@ DREAM4が重要なのは、合成Hill式だけで成功した方法が、より�
 
 ### NMSE
 
-$$
+```math
 \mathrm{NMSE}=\frac{\sum_{i=1}^{N}(y_i-\hat y_i)^2}{\sum_{i=1}^{N}(y_i-\bar y)^2+\varepsilon}
-$$
+```
 
 0が完全一致で、小さいほどよい。1付近は「平均値だけを予測する」のと同程度である。
 
 ### 決定係数 $R^2$
 
-$$
+```math
 R^2=1-\frac{\sum_{i=1}^{N}(y_i-\hat y_i)^2}{\sum_{i=1}^{N}(y_i-\bar y)^2+\varepsilon}
-$$
+```
 
 1が完全一致、0は平均値予測と同程度、負値は平均値予測より悪い。
 
 ### Precision・Recall・F1
 
-$$
+```math
 \mathrm{Precision}=\frac{TP}{TP+FP},\qquad\mathrm{Recall}=\frac{TP}{TP+FN}
-$$
+```
 
-$$
+```math
 F_1=\frac{2\,\mathrm{Precision}\,\mathrm{Recall}}{\mathrm{Precision}+\mathrm{Recall}}
-$$
+```
 
 制御辺や使用変数の回復を測る。Precisionは余計な予測の少なさ、Recallは見落としの少なさを表す。
 
@@ -320,7 +324,7 @@ $$
 
 最新コードではdecode失敗を除外せず、失敗へ罰則を与えたNMSEを主指標にする。
 
-## 6. CPU環境と実装状況
+## 6. 実行環境と実装状況
 
 CPU実験はWindows上のPython 3.10環境で実施した。高beam幅、十分なMCTS rollout、大規模なseed反復は未実施である。
 
@@ -331,10 +335,10 @@ CPU実験はWindows上のPython 3.10環境で実施した。高beam幅、十分�
 | NeSymReS | checkpointロード・推論・選択的fine-tuningに成功 |
 | PySR | Juliaバックエンドを含め動作確認済み |
 | TPSR | E2EおよびNeSymReSバックボーン用コードを統合 |
-| テスト | 現在のCPU環境で **46 passed、2 skipped** |
-| GPU計算 | 未実施 |
+| CPU pilot当時のテスト | **46 passed、2 skipped** |
+| GPU_RUN1 | Colab Pro、NVIDIA L4、Python 3.10.13でreduced run完了 |
 
-2件のskipは、現在のPython 3.12環境ではNeSymReS/Hydra 1.0の互換テストを実行しないことと、
+CPU pilot当時の2件のskipは、Python 3.12環境ではNeSymReS/Hydra 1.0の互換テストを実行しないことと、
 gitignore対象のDREAM4 archiveが未配置の環境では実データ統合テストを実行しないことによる。
 GPU本実験ではPython 3.10を使用する。ColabではUIを動かす標準kernelと研究コードの実行環境を分け、
 Phase 0 Notebookが用意する明示的なPython 3.10 workerでpreflightと全Phaseを実行する。
@@ -342,36 +346,45 @@ Phase 0 Notebookが用意する明示的なPython 3.10 workerでpreflightと全P
 ローカルの `10M.ckpt` はファイル名と異なり、state dict上はencoder/decoder各5層の100M設定側アーキテクチャである。
 そのため `NSRS/jupyter/100M/config.yaml` と組み合わせている。
 
+GPU_RUN1は3 seeds、noise 0.1、主にbeam 2で実行した。Phase 7は計算制約により主集計をDREAM4 networks 1–3へ縮小し、
+Phase 8のPySRだけはローカルCPUで実行してColab成果物へ統合した。
+
 ## 7. 実施したPhase
 
-| Phase | 内容 | CPUでの到達点 |
+| Phase | 内容 | GPU_RUN1での到達点 |
 |---|---|---|
-| 0 | 環境・checkpoint・ベースラインの動作確認 | 完了 |
-| 1 | 合成Hill式・toggle・repressilator・多様な式構造の生成 | 完了 |
-| 2 | NeSymReSとPySRの基礎比較 | 完了 |
-| 3 | encoder/decoder各層の選択的fine-tuningスキャン | 完了（探索的） |
-| 4 | 層寄与度とseed安定性の測定 | CPU小規模実験まで完了 |
-| 5 | top/middle/random/bottom/full fine-tuningの比較 | CPU単一seedまで完了 |
-| 6 | 選択的FT × TPSRの2×2比較とノイズ試験 | smoke testまで完了 |
-| 7 | DREAM4 Size10/Size100、SBML teacherによる転移 | CPU小規模実験まで完了 |
-| 8 | ヒトLPS刺激時系列、holdout donor、LODO評価 | CPU実験完了 |
+| 0 | 環境・checkpoint・ベースラインの動作確認 | Colab、Drive、Python 3.10、L4 preflight完了 |
+| 1 | 合成Hill式・toggle・repressilator・多様な式構造の生成 | noise 0.1で完了 |
+| 2 | NeSymReSとPySRの基礎比較 | reduced設定で完了 |
+| 3 | encoder/decoder各層の選択的fine-tuningスキャン | 約10分で完了 |
+| 4 | 層寄与度とseed安定性の測定 | 3 seedsで完了 |
+| 5 | top/middle/random/bottom/full fine-tuningの比較 | 3 seedsで完了 |
+| 6 | 選択的FT × TPSRの2×2比較 | noise 0.1、3 seedsで完了 |
+| 7 | DREAM4 Size10/Size100への転移 | 主集計は3 seeds × networks 1–3 |
+| 8 | ヒトLPS刺激時系列、LODO評価 | NeSymReS 3 seedsとローカルPySRを統合 |
+| 9 | validation、archive、checksum | validated、archive作成済み |
 
-## 8. CPU実験結果
+## 8. CPU pilotとGPU_RUN1の結果
+
+### 8.0 CPU結果の位置付け
+
+8.1〜8.7の数値はGPU_RUN1より前のCPU pilotであり、最新の評価設計による確証結果ではない。
+GPU_RUN1の多seed結果は8.8に分けて記載する。
 
 ### 8.1 Phase 0：実行基盤
 
 - NeSymReSは、入力データの真の関係
 
-$$
+```math
 y=x_1\sin(x_1)
-$$
+```
 
   を同値な式として復元した。
 - PySRの出力も
 
-$$
+```math
 \hat y=x\sin(x)
-$$
+```
 
   となった。
 - TPSR E2EモデルをWindows/CPU上でロードし、軽量MCTSを完走した。
@@ -394,22 +407,22 @@ $$
 
 例えば `rpl_x2_test_25` の真の式は
 
-$$
+```math
 \frac{dx_2}{dt}=\frac{2.5}{1+x_1^4}-0.6x_2
-$$
+```
 
 であり、PySRの保存された出力は
 
-$$
+```math
 \frac{dx_2}{dt}=-0.6x_2+\frac{2.5}{x_1^4+x_2/x_2}=-0.6x_2+\frac{2.5}{x_1^4+1}
-$$
+```
 
 だった。この例では $x_2/x_2=1$ なので真の式と同値で、ID/OODともNMSEはほぼ0だった。
 一方、別の抑制問題 `rep_test_20` に対するNeSymReS beam=5の出力例には
 
-$$
+```math
 \hat f(x_1,x_2)=-x_1+\frac{x_1}{x_2+0.7611}
-$$
+```
 
 のように数値的にはある範囲へ適合しても、真のHill型抑制とは構造が異なる式もあった。
 
@@ -457,7 +470,8 @@ top層はrandom/bottom/fullを上回った。全層fine-tuningはCEを改善し�
 ただし単一seedかつ旧評価設計なので、中心仮説の確証ではない。
 
 この旧runの `selective_results.json` は条件別の集約値のみを保存しており、推定数式を保存していない。
-したがって捏造を避けるため、このPhaseの出力式は「記録なし」とする。GPU再実験では全問題の式文字列を必須成果物にする。
+したがって捏造を避けるため、このCPU Phaseの出力式は「記録なし」とする。
+GPU_RUN1では全問題の式文字列を保存したが、CPU pilotの欠損を後から補ったものとしては扱わない。
 
 詳細：[`phase5_report.md`](results/phase_results/phase5_report.md)
 
@@ -476,7 +490,8 @@ TPSR単独はbeamより悪化したが、選択的FT後には改善した。微�
 ただし $n=2$ である。ノイズ0.0と0.1の比較では `selective + TPSR` のNMSE劣化量が
 `selective + beam` より大きく、現時点でノイズ耐性仮説は支持されない。
 
-この旧runも推定式文字列を保存していないため、出力式は「記録なし」である。GPU再実験ではbeam/TPSR双方の式と複雑度を保存する。
+この旧runも推定式文字列を保存していないため、出力式は「記録なし」である。
+GPU_RUN1ではbeam/TPSR双方の式と複雑度を保存したが、旧runとは別世代の結果である。
 
 詳細：[`phase6_report.md`](results/phase_results/phase6_report.md)、
 [`phase6_noise_report.md`](results/phase_results/phase6_noise_report.md)
@@ -506,9 +521,9 @@ SR以前のregulator preselectionが大きなボトルネックである。
 
 Size10 net1の標的G1に対する保存済みのNeSymReS出力例は
 
-$$
+```math
 \widehat{\frac{dG_1}{dt}}=-0.006125\tan(0.896395G_1-0.563921)
-$$
+```
 
 で、NMSEは0.824だった。Size10の公開評価では真のODE式を直接比較できず、この式を真の機構とは解釈できない。
 むしろ、Hill型GRNとして不自然な $\tan$ が生成され、予測性能も低いという失敗例である。
@@ -545,17 +560,17 @@ NCBI GEOの **GSE112372** [12] から、20遺伝子、4 donors、5時点を使�
 
 保存された選択的FTの出力例は次のとおりである。ここで $x_1,x_2,x_3$ は標的ごとに選んだ候補制御因子を表す。
 
-$$
+```math
 \widehat{\frac{d\,\mathrm{CCL5}}{dt}}=0.0002435\,\frac{x_1+x_2+x_3+13251.04}{x_1-2.0272}
-$$
+```
 
-$$
+```math
 \widehat{\frac{d\,\mathrm{CD40}}{dt}}=\left[\cos(x_1+x_2-x_3)-0.06879\right]^2
-$$
+```
 
-$$
+```math
 \widehat{\frac{d\,\mathrm{IFNB1}}{dt}}=\frac{0.62524x_1}{(0.40253x_2-x_3)^2}
-$$
+```
 
 これらには分母が0へ近づく特異点や、Hill型制御として解釈しにくい三角関数が含まれる。
 したがって、良いholdout NMSEだけを根拠に「真のヒト制御ODEを発見した」とは言えない。
@@ -566,20 +581,82 @@ LODOでは「選択的FTがPySRよりdonor間で一般化する」という主�
 詳細：[`phase8_report.md`](results/phase_results/phase8_report.md)、
 [`phase8_lodo_report.md`](results/phase_results/phase8_lodo_report.md)
 
-## 9. CPU研究から得られた結論
+### 8.8 GPU_RUN1 reduced run
 
-1. **適応効果は層によって異なる。** CEではdecoder後段、数値予測ではencoder側の寄与が大きかった。
-2. **全層fine-tuningが常に最良ではない。** CPU pilotでは少数層の更新が全層更新より良い場合があった。
-3. **選択的FTはNeSymReSのdomain adaptationを改善する可能性がある。** ただしPySRへの一般的優位性はない。
-4. **TPSRとの相互作用は候補として残る。** 小規模実験では選択的FT後のみ改善したが、統計的検証は未実施である。
-5. **DREAM4では候補制御因子選択が支配的な課題である。** 単純なcorr/MI/LASSOはoracleから大きく劣る。
-6. **単一splitの良い結果を信用しすぎてはいけない。** ヒトLODOでは単一holdoutの結論が逆転した。
+GPU_RUN1では、Google Colab ProのNVIDIA L4とローカルCPUを分担して、3 seeds・noise 0.1のPhase 0–9を実行した。
+最終runは`colab_reduced_20260729_03`で、manifestは`complete`、validationは`validated`である。
+
+#### 層寄与と少数層fine-tuning
+
+合成validationでは、`decoder_2`、`decoder_3`、`decoder_4`がNMSE、$`R^2`$、symbolic recoveryのtop 3へ
+全seedで入った。`decoder_3`単独の正規化NMSE寄与度は`0.9984 ± 0.0068`だった。
+
+独立testでのfailure-penalized NMSEは次のとおりである。`±`は3 seedsに対するStudentのt分布による
+95%信頼区間の半幅である。
+
+| 条件 | Penalized NMSE | Valid rate |
+|---|---:|---:|
+| pretrained | 0.0935 ± 0.0150 | 0.989 |
+| 全層FT | **0.0142 ± 0.0037** | 1.000 |
+| top 1 | 0.0146 ± 0.0009 | 1.000 |
+| top 3 | 0.0150 ± 0.0060 | 1.000 |
+| random 3集合の平均 | 約0.0174 | 1.000 |
+| bottom 3 | 0.0246 ± 0.0084 | 0.967 |
+
+Top 1〜3は事前定義したNMSE margin `±0.05`内で全層FTと同等だった。Top 3はbottom 3より良かったが、
+random 3集合との差の95%信頼区間は0を含んだ。このため「少数層で全層に匹敵する」は支持された一方、
+「寄与度上位層でなければならない」は未確定である。Top 1のpeak memoryは全層FTより約58%少なかった。
+
+#### TPSR
+
+| 方法 | Penalized NMSE | Valid rate | Complexity | 記録elapsed秒 |
+|---|---:|---:|---:|---:|
+| selective beam | 0.0131 ± 0.0039 | 1.000 | 19.622 | 127 |
+| selective + TPSR | 0.0096 ± 0.0010 | 0.922 | 25.963 | 6,989 |
+
+TPSRの追加NMSE改善は小さく、その95%信頼区間は0をまたいだ。記録elapsedはbeamの約55倍で、
+valid rateと式複雑度も悪化した。GPU_RUN1のbudgetでは、TPSRが精度と複雑度のトレードオフを改善したとはいえない。
+
+#### DREAM4
+
+主集計は、全3 seedsで全条件が揃ったnetworks 1–3に限定した。Size100ではselective + oracle変数のNMSEが
+`0.8794 ± 0.0358`、selective + correlation選択が`0.9005 ± 0.0082`だった。
+一方、correlation、LASSO、mutual informationのedge F1はいずれも約0.05で、oracleの約0.85から大きく離れた。
+高次元GRNでは、数式生成より前のregulator selectionが主要なボトルネックである。
+
+#### ヒトLODO
+
+| 方法 | Holdout NMSE | Valid rate |
+|---|---:|---:|
+| pretrained beam | 0.8867 ± 0.1637 | 0.992 |
+| selective beam | 0.5145 ± 0.1927 | 1.000 |
+| PySR | **0.2417 ± 0.1916** | 0.958 |
+
+selective FTはpretrainedを改善したが、PySRのholdout NMSEが最も低かった。ただしPySRとNeSymReSでは
+演算子集合、探索budget、parallelismが完全には一致しておらず、4 donors・5時点の小規模application demoでもある。
+
+GPU_RUN1では、低NMSEの式にも`tan`、多数の除算、特異点に近い形が多く、Phase 5 testのsymbolic recoveryは
+全条件で0だった。したがって、数値性能の改善を真の式構造、生物学的機構、因果ODEの回復とは解釈しない。
+
+詳細な実行履歴、全数値、限界、archive SHA256は
+[`results/GPU_RUN1_report.md`](results/GPU_RUN1_report.md)を参照する。
+
+## 9. CPU pilotとGPU_RUN1から得られた結論
+
+1. **適応効果はdecoder中後段へ集中した。** GPU_RUN1では`decoder_2`〜`decoder_4`の順位が3 seedsで安定した。
+2. **少数層FTは全層FTに匹敵した。** Top 1〜3はNMSE同等性margin内で全層FTと同等だった。
+3. **精密な層rankingの必要性は未確定である。** Top 3対random 3の差は3 seedsでは明確でなかった。
+4. **TPSRの費用対効果は低かった。** selective FT後の追加改善は小さく、時間、valid rate、複雑度が悪化した。
+5. **DREAM4では候補制御因子選択が支配的な課題である。** Size100の経験的selector F1は約0.05だった。
+6. **ヒトLODOではPySRが低NMSEだった。** ただし方法間budgetが不統一で、NeSymReSへの一般的優越を確定していない。
 7. **symbolic recoveryは未達である。** 良いNMSEは、正しい式構造や生物学的機構の回復を意味しない。
+8. **GPU_RUN1は探索的reduced runである。** Phase 7はnetworks 1–3で、複数の継続runを含むため、
+   GPU_RUN2を固定commitの独立な確認実験とする。
 
 ## 10. 結果を読む際の重要な注意
 
-上記の数値は、最新のレビュー修正より前に生成されたCPU pilotを含む。コード側では次を修正済みだが、
-Phase 4以降は計算時間の都合で再実行していない。
+8.1〜8.7のCPU数値には、最新のレビュー修正より前に生成されたlegacy pilotが含まれる。
+CPU pilotのPhase 4以降は、次の修正後に同じ条件で再実行した値ではない。
 
 - testを層選択へ使わず、trainからmotif単位でvalidationを分離する。
 - Phase 5の最終比較に独立testだけを使う。
@@ -590,7 +667,7 @@ Phase 4以降は計算時間の都合で再実行していない。
 - Phase 6で精度・valid率・式複雑度を同時保存する。
 - runごとのmanifest、checkpoint SHA256、ログ、出力を分離する。
 
-### 10.1 GPU実験前に追加した公正化・安全対策
+### 10.1 GPU_RUN1へ追加した公正化・安全対策
 
 Claudeの研究レビューで、CPU pilotのfull FTがpretrainedより悪化しているため、同じ学習率とepochを全条件へ
 適用した結果だけでは「少数層で十分」と判断できないことが指摘された。これを受け、GPU用の最新コードには次を実装した。
@@ -607,7 +684,8 @@ Claudeの研究レビューで、CPU pilotのfull FTがpretrainedより悪化し
 - **指標の混入防止**：未定義のNMSEや$R^2$寄与度を順位平均へ混ぜない。Phase 5の結果には、CE、NMSE、$R^2$のうち
   実際に層順位へ使えた指標名も記録する。
 - **順位安定性**：top-3出現率に加え、seed間のSpearman・Kendall順位相関を保存する。
-- **複数random対照**：5個の異なるrandom層集合を各training seedで評価し、seed内平均をtop条件とpaired比較する。
+- **複数random対照**：複数のrandom層集合を各training seedで評価し、seed内平均をtop条件とpaired比較する。
+  GPU_RUN1では3集合を使ったが検出力が不足したため、GPU_RUN2では反復数を事前に増やす。
 - **条件間の直接比較**：top 1/2/3とpretrained、middle、bottom、複数random集合、full FTについて、NMSE、R2、valid率、式複雑度のpaired差を保存する。
   top対fullではfailure-penalized NMSE差・95% t区間を主判定に使う。
   事前指定margin（既定0.05）に区間全体が入る場合だけ「実質同等」とし、単なる非有意差を同等と解釈しない。
@@ -631,31 +709,37 @@ phase4_multiseed/
   ranking_stability.json                     seed間Spearman・Kendall順位相関
 ```
 
-これらはGPU実験の設計を修正したものであり、前節までに掲載したCPU pilotを再計算した結果ではない。
+これらはGPU実験の設計を修正したものであり、8.1〜8.7のCPU pilotを再計算した結果ではない。
 したがって、CPU pilotの数値を新しい設計で得た結果として解釈してはならない。
 
 また、旧Phase 3–6では集約ファイルに推定式文字列を残していなかった。数値指標だけでは式の妥当性を監査できないため、
-GPU実験では各問題について、真の式、推定式、簡約式、変数対応、複雑度、valid判定を保存する必要がある。
+GPU_RUN1では各問題について、真の式、推定式、簡約式、変数対応、複雑度、valid判定を保存した。
 
-したがって、CPU結果から論文レベルで仮説を確定してはならない。現時点の適切な表現は次のとおりである。
+したがって、CPU結果だけから論文レベルで仮説を確定してはならない。
+GPU_RUN1では少数層FTの全層同等性が支持されたが、3 seedsのreduced runであり、独立な確認実験が必要である。
+現時点の適切な表現は次のとおりである。
 
-> 層選択的fine-tuning、TPSR、DREAM4、ヒトLODOを含む研究パイプラインを構築し、
-> CPU小規模実験で動作、予備的傾向、主要な失敗要因を確認した。
+> 層選択的fine-tuning、TPSR、DREAM4、ヒトLODOを含む研究パイプラインを構築した。
+> GPU_RUN1 reduced runでは少数decoder層が全層FTに匹敵する数値性能を示した一方、
+> 構造回復、高次元変数選択、公平なbaseline比較が未解決として残った。
 
 ## 11. 今後の展望
 
-### 11.1 次に行うGPU実験
+### 11.1 次に行うGPU_RUN2
 
-1. **事前確認**：[`GPU_RUN.md`](GPU_RUN.md) に従い、CUDA、checkpoint、設定、依存関係をpreflightで確認する。
-   Colabでは [`notebooks/colab/README.md`](notebooks/colab/README.md) のPhase別Notebookを使い、
-   固定commitと固定run設定の成果物をGoogle Driveへ逐次同期する。
-2. **Phase 4再実行**：5–10 seedsで層寄与を測り、validation上の順位、top-3出現率、順位相関を求める。
-3. **Phase 5本比較**：各条件へ同数の学習率・epoch候補を与え、validation CEによるearly stoppingとbest-weight復元を行う。その後、同じseed集合でtop、複数random集合、bottom、fullを独立test上で一度だけ評価し、paired差とt信頼区間を求める。top対fullは事前指定marginによる同等性・非劣性も判定する。
-4. **Phase 6本比較**：計算量を抑えるためnoiseは0.1だけとし、複数seed・十分なMCTS budgetで2×2比較して、FT効果、TPSR効果、相互作用を分離する。noise slopeは今回の推論対象にしない。
-5. **精度–複雑度評価**：NMSEだけでなく、valid率、式長、演算子数、Pareto frontierを比較する。
-6. **DREAM4再評価**：Size10/100の全networkをtrajectory分割で評価し、regulator selectionとSRの誤差を分解する。
-7. **ヒトLODO再評価**：valid率、donor間性能、外挿安定性、非負性、特異点の有無を確認する。
-8. **全式保存**：各runの全推定式と簡約式を保存し、代表例だけでなく失敗例も追跡可能にする。
+GPU_RUN2の詳細は [`plan/20260729_GPU_RUN2.md`](plan/20260729_GPU_RUN2.md) に記載する。
+主要な変更は次のとおりである。
+
+1. **固定commitの独立run**：GPU_RUN1の継続成果物をseed反復として混ぜず、Phase 0–9を一貫した設定で実行する。
+2. **validation probing**：全層を高budgetで走らせる前に候補を5〜8層へ絞り、testを見る前にrankingを固定する。
+3. **演算子制限**：`tan`などの三角関数と危険な除算を主探索から除き、NeSymReS、TPSR、PySRのoperatorをそろえる。
+4. **15秒timeout**：validation probeで妥当性を確認してから全条件へ固定し、p50、p90、p95、最大時間、timeout率を保存する。
+5. **top対randomの確認**：random層集合の反復を増やし、全層同等性とは別にrankingの付加価値を検証する。
+6. **TPSRのGo/No-Go**：MCTS、BFGS、Transformer推論をprofileし、費用対効果が低ければ大規模実行しない。
+7. **DREAM4全network**：Size10/100、networks 1–5を同じbudgetで完了し、regulator selectionとSR誤差を分解する。
+8. **CPU/GPU分離**：PySR、集計、図表、archiveなどCPU中心処理をローカルへ移す。
+9. **構造と安全性を主評価**：NMSEだけでなく、exact/skeleton recovery、variable F1、valid rate、
+   危険演算子、分母margin、外挿安定性を評価する。
 
 ### 11.2 研究上の課題
 
