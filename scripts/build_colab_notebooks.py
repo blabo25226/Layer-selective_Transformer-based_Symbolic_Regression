@@ -87,6 +87,9 @@ PYTHON_310 = code(
 PHASE7_CONTINUATION_SOURCE_COMMIT = (
     "518e0264744427761ff97d5b020638095a5bf8f6"
 )
+PHASE8_OPTIMIZED_SOURCE_COMMIT = (
+    "9db00f4d567de5c55846587dbda430d1ab6cca0b"
+)
 
 
 def bootstrap_cell(pinned_source_commit: str = "") -> dict:
@@ -599,7 +602,8 @@ def notebook(cells: list[dict]) -> dict:
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    continuation_run_id = "colab_reduced_20260729_02"
+    phase7_run_id = "colab_reduced_20260729_02"
+    phase8_run_id = "colab_reduced_20260729_03"
     notebooks = {
         "00_setup_preflight.ipynb": setup_notebook(),
         "01_phase1_data.ipynb": diagnostic_notebook(
@@ -643,7 +647,7 @@ def main() -> int:
             7,
             "LTSR Colab Phase 7 — DREAM4",
             "Size10/100をseed×network shardで実行し、Size100はtarget単位でもresumeする。",
-            run_id=continuation_run_id,
+            run_id=phase7_run_id,
             max_parallel_seeds=1,
             pinned_source_commit=PHASE7_CONTINUATION_SOURCE_COMMIT,
             continue_from_run_id="colab_reduced_20260729_01",
@@ -652,12 +656,13 @@ def main() -> int:
             8,
             "LTSR Colab Phase 8 — GSE112372 LODO",
             "4 donorのcross-donor application demoを実行する。",
-            run_id=continuation_run_id,
-            pinned_source_commit=PHASE7_CONTINUATION_SOURCE_COMMIT,
+            run_id=phase8_run_id,
+            pinned_source_commit=PHASE8_OPTIMIZED_SOURCE_COMMIT,
+            continue_from_run_id="colab_reduced_20260729_02",
         ),
         "09_validate_archive.ipynb": validate_notebook(
-            run_id=continuation_run_id,
-            pinned_source_commit=PHASE7_CONTINUATION_SOURCE_COMMIT,
+            run_id=phase8_run_id,
+            pinned_source_commit=PHASE8_OPTIMIZED_SOURCE_COMMIT,
         ),
     }
     for filename, payload in notebooks.items():
