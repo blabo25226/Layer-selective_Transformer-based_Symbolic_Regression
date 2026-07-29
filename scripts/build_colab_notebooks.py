@@ -85,7 +85,7 @@ PYTHON_310 = code(
 )
 
 PHASE7_CONTINUATION_SOURCE_COMMIT = (
-    "185264013a0c5efff8ad0e21ae64de6c6ae2fefa"
+    "518e0264744427761ff97d5b020638095a5bf8f6"
 )
 
 
@@ -599,7 +599,7 @@ def notebook(cells: list[dict]) -> dict:
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    continuation_run_id = "colab_reduced_20260729_01"
+    continuation_run_id = "colab_reduced_20260729_02"
     notebooks = {
         "00_setup_preflight.ipynb": setup_notebook(),
         "01_phase1_data.ipynb": diagnostic_notebook(
@@ -646,7 +646,7 @@ def main() -> int:
             run_id=continuation_run_id,
             max_parallel_seeds=1,
             pinned_source_commit=PHASE7_CONTINUATION_SOURCE_COMMIT,
-            continue_from_run_id="colab_reduced_20260728_01",
+            continue_from_run_id="colab_reduced_20260729_01",
         ),
         "08_phase8_human_lodo.ipynb": phase_notebook(
             8,
