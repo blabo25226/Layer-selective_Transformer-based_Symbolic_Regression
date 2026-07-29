@@ -139,11 +139,11 @@ f^*=\underset{f\in\mathcal{F}}{\mathrm{arg\,min}}\left[\frac{1}{N}\sum_{i=1}^{N}
 $\lambda$ は「精度」と「単純さ」のどちらを重視するかを決める値である。
 単に誤差が小さいだけの巨大な式ではなく、短く説明しやすい式を探す点が重要である。
 
-本研究の比較対象 **PySR** は、複数の式集団を進化させ、式の変形・簡約・定数最適化を繰り返す実用的なSRである [5]。
+本研究の比較対象 **PySR** は、複数の式集団を進化させ、式の変形・簡約・定数最適化を繰り返す実用的なSRである [4]。
 
 ### 2.3 TransformerとNeSymReS
 
-**Transformer**は、入力中のどの部分に注目するかを計算するattentionを中心としたニューラルネットワークである [1]。
+**Transformer**は、入力中のどの部分に注目するかを計算するattentionを中心としたニューラルネットワークである。
 入力行列を $Q,K,V$ に変換するscaled dot-product attentionは、概略
 
 ```math
@@ -153,7 +153,7 @@ $\lambda$ は「精度」と「単純さ」のどちらを重視するかを決�
 で表される。Transformerは同じ形の層を複数積み重ねる。**encoder**は入力を内部表現へ変換し、
 **decoder**はその表現から出力列を1記号ずつ生成する。
 
-**NeSymReS** は、大量の人工数式と、その数式から作った数値点集合を使ってTransformerを事前学習する手法である [2]。
+**NeSymReS** は、大量の人工数式と、その数式から作った数値点集合を使ってTransformerを事前学習する手法である [1]。
 入力は順序を持たない点集合
 
 ```math
@@ -171,7 +171,7 @@ NeSymReS論文は、大規模な手続き生成データによる事前学習が
 **fine-tuning（微調整）** は、事前学習済みモデルを目的データでもう一度学習し、専門分野へ適応させることである。
 全層fine-tuningは柔軟だが、計算・メモリを多く使い、データが少ないと過適合する可能性がある。
 
-本研究の直接の着想は、Zhangらの *Is One Layer Enough?* [4] である。この研究はLLMの強化学習後学習を
+本研究の直接の着想は、Zhangらの *Is One Layer Enough?* [3] である。この研究はLLMの強化学習後学習を
 層ごとに調べ、改善が少数の中間層へ集中する場合を報告した。層 $l$ だけを学習した損失を $L_l$、
 事前学習モデルを $L_{\mathrm{base}}$、全層学習を $L_{\mathrm{full}}$ とすると、損失が小さいほどよい場合の層寄与度を
 
@@ -189,7 +189,7 @@ C_l=
 ### 2.5 TPSR
 
 **TPSR（Transformer-based Planning for Symbolic Regression）** は、Transformerの出力確率と
-**Monte Carlo Tree Search（MCTS）** を組み合わせる方法である [3]。通常のbeam searchは、次のtoken確率が高い候補を
+**Monte Carlo Tree Search（MCTS）** を組み合わせる方法である [2]。通常のbeam searchは、次のtoken確率が高い候補を
 残していく。TPSRは数式を途中まで作った状態から先読みし、完成した式の精度や複雑度を評価して探索方向を修正する。
 
 本研究ではTPSRを別の学習モデルではなく、NeSymReSの数式生成を改善する推論時探索として扱う。
@@ -203,10 +203,10 @@ R(f)=-\mathrm{NMSE}(f)-\lambda C(f)
 
 ### 2.6 DREAM4とGeneNetWeaver
 
-**DREAM4 In Silico Network Challenge** は、未知のGRNを遺伝子発現データから復元する国際的な比較課題である [8]。
+**DREAM4 In Silico Network Challenge** は、未知のGRNを遺伝子発現データから復元する国際的な比較課題である [6]。
 本研究で使うin silicoデータには、10遺伝子または100遺伝子のネットワーク、時系列、摂動実験、正解の制御辺が含まれる。
 
-データ生成には **GeneNetWeaver（GNW）** が使われた [7]。GNWは実在する大腸菌・酵母ネットワークから部分構造を取り出し、
+データ生成には **GeneNetWeaver（GNW）** が使われた [5]。GNWは実在する大腸菌・酵母ネットワークから部分構造を取り出し、
 転写・翻訳、制御、分子ノイズ、実験ノイズを含む動力学モデルを与える。したがって、単純なランダムグラフより
 生物学的な構造を持ちつつ、正解ネットワークを知った状態で評価できる。
 
@@ -216,19 +216,18 @@ DREAM4が重要なのは、合成Hill式だけで成功した方法が、より�
 
 ### 2.7 関連研究と本研究の位置づけ
 
-- **NeSymReS** はTransformerの大規模事前学習をSRへ導入した [2]。
-- **TPSR** はMCTSでTransformerの数式生成を計画問題として改善した [3]。
-- **PySR** は進化的探索による強力な非ニューラル比較対象である [5]。
-- **ScaleSR** は多変数SRを低次元問題へ分解し、toggle switchやrepressilatorも扱った [9]。
-- **LogicGep** と **LogicSR** はGRNをSRとして扱うが、主にBoolean論理規則を出力する [10, 11]。
+- **NeSymReS** はTransformerの大規模事前学習をSRへ導入した [1]。
+- **TPSR** はMCTSでTransformerの数式生成を計画問題として改善した [2]。
+- **PySR** は進化的探索による強力な非ニューラル比較対象である [4]。
+- **ScaleSR** は多変数SRを低次元問題へ分解し、toggle switchやrepressilatorも扱った [7]。
 - **LNSR**、**PI-NDSR**、**ND2**、**ODEFormer** は、ニューラルSRをネットワーク動力学やODE発見へ拡張している
-  [14–17]。本研究は、それらの予測性能だけでなくTransformer内部の層ごとの役割を主対象にする。
+  [9–12]。本研究は、それらの予測性能だけでなくTransformer内部の層ごとの役割を主対象にする。
 - **TSRM**、**DecoderLens**、**CKA**、probeとactivation patchingの研究は、層表現と因果的寄与を区別して
-  解釈する方法を与える [13, 19–24]。
+  解釈する方法を与える [8, 14–19]。
 - **SINDy**、**SINDy-PI**、**WeakIdent**、**D-CODE** は、観測軌道から支配方程式を回復する別系統の方法であり、
-  導関数推定と疎な式回復の比較基準になる [27, 28, 31, 36]。
+  導関数推定と疎な式回復の比較基準になる [22, 23, 26, 31]。
 - **SRBench**、**Boolformer**、**ESRT**、**CNSR**、**DySymNet**、**DGSR**などは、
-  探索方式、制約、生成モデルの異なるSR比較対象を提供する [25, 26, 32, 33, 37, 40]。
+  探索方式、制約、生成モデルの異なるSR比較対象を提供する [20, 21, 27, 28, 32, 35]。
 
 本研究の新規性は個々の技術そのものではなく、次の組合せにある。
 
@@ -567,7 +566,7 @@ DREAM有限差分への改善は0.890から0.725に留まった。teacher domain
 
 ### 8.7 Phase 8：ヒトLPS刺激時系列
 
-NCBI GEOの **GSE112372** [12] から、20遺伝子、4 donors、5時点を使用した。
+NCBI GEOの **GSE112372** から、20遺伝子、4 donors、5時点を使用した。
 5時点から得た導関数は真のODE微分ではなく、平滑化有限差分によるproxyである。
 
 単一donor holdoutでは選択的FTが良かった。
@@ -844,115 +843,107 @@ TPSR/          TPSR参照実装
 ## 14. 参考文献
 
 本研究で調査対象として管理している文献・公式実装の一覧は [`source.md`](source.md) に置く。
-以下は、README本文で参照する基礎文献と、層解析、ニューラルSR、動的方程式発見に関係する主要文献である。
+以下の参考文献は、[`source.md`](source.md) に掲載されたものだけで構成する。
 
-1. Vaswani, A. et al. (2017). **Attention Is All You Need.** NeurIPS 2017.
-   <https://proceedings.neurips.cc/paper_files/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html>
-2. Biggio, L. et al. (2021). **Neural Symbolic Regression that Scales.** ICML 2021, PMLR 139:936–945.
+1. Biggio, L. et al. (2021). **Neural Symbolic Regression that Scales.** ICML 2021, PMLR 139:936–945.
    <https://proceedings.mlr.press/v139/biggio21a.html>
    公式実装：<https://github.com/SymposiumOrganization/NeuralSymbolicRegressionThatScales>
-3. Shojaee, P. et al. (2023). **Transformer-based Planning for Symbolic Regression.** NeurIPS 2023.
+2. Shojaee, P. et al. (2023). **Transformer-based Planning for Symbolic Regression.** NeurIPS 2023.
    <https://openreview.net/forum?id=0rVXQEeFEL>
    公式実装：<https://github.com/deep-symbolic-mathematics/tpsr>
-4. Zhang, Z. et al. (2026). **Is One Layer Enough? Training A Single Transformer Layer Can Match Full-Parameter RL Training.** arXiv:2607.01232.
+3. Zhang, Z. et al. (2026). **Is One Layer Enough? Training A Single Transformer Layer Can Match Full-Parameter RL Training.** arXiv:2607.01232.
    <https://arxiv.org/abs/2607.01232>
-5. Cranmer, M. (2023). **Interpretable Machine Learning for Science with PySR and SymbolicRegression.jl.** arXiv:2305.01582.
+4. Cranmer, M. (2023). **Interpretable Machine Learning for Science with PySR and SymbolicRegression.jl.** arXiv:2305.01582.
    <https://arxiv.org/abs/2305.01582>
-6. PySR documentation and source code.
-   <https://github.com/MilesCranmer/PySR>
-7. Schaffter, T., Marbach, D., & Floreano, D. (2011). **GeneNetWeaver: In Silico Benchmark Generation and Performance Profiling of Network Inference Methods.** *Bioinformatics*, 27(16), 2263–2270.
+   公式実装：<https://github.com/MilesCranmer/PySR>、
+   <https://github.com/MilesCranmer/SymbolicRegression.jl>
+5. Schaffter, T., Marbach, D., & Floreano, D. (2011). **GeneNetWeaver: In Silico Benchmark Generation and Performance Profiling of Network Inference Methods.** *Bioinformatics*, 27(16), 2263–2270.
    <https://doi.org/10.1093/bioinformatics/btr373>
-8. DREAM / GeneNetWeaver. **DREAM4 In Silico Network Challenge.**
+6. DREAM / GeneNetWeaver. **DREAM4 In Silico Network Challenge.**
    <https://gnw.sourceforge.net/dreamchallenge.html>
-9. Chu, X. et al. (2023). **Scalable Neural Symbolic Regression using Control Variables.** arXiv:2306.04718.
+7. Chu, X. et al. (2023). **Scalable Neural Symbolic Regression using Control Variables.** arXiv:2306.04718.
    <https://arxiv.org/abs/2306.04718>
-10. Zhang, D. et al. (2024). **LogicGep: Boolean Networks Inference Using Symbolic Regression from Time-Series Transcriptomic Profiling Data.** *Briefings in Bioinformatics*, 25(4), bbae286.
-    <https://doi.org/10.1093/bib/bbae286>
-11. Zhang, D., Liu, Z.-P., & Gao, R. (2025). **LogicSR: Prior-Guided Symbolic Regression for Gene Regulatory Network Inference from Single-Cell Transcriptomics Data.** *Briefings in Bioinformatics*, 26(6), bbaf621.
-    <https://doi.org/10.1093/bib/bbaf621>
-12. NCBI Gene Expression Omnibus. **GSE112372: Time-series of human LPS stimulated-monocyte derived macrophages.**
-    <https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE112372>
-13. **Explaining the Explainer: Understanding the Inner Workings of Transformer-based Symbolic Regression Models.**
+8. **Explaining the Explainer: Understanding the Inner Workings of Transformer-based Symbolic Regression Models.**
     arXiv:2602.03506, 2026.
     <https://arxiv.org/abs/2602.03506>
-14. **Learning Interpretable Network Dynamics via Universal Neural Symbolic Regression.**
+9. **Learning Interpretable Network Dynamics via Universal Neural Symbolic Regression.**
     *Nature Communications*, 2025.
     <https://doi.org/10.1038/s41467-025-61575-7>
-15. **Neural Symbolic Regression of Complex Network Dynamics.** arXiv:2410.11185, 2024.
+10. **Neural Symbolic Regression of Complex Network Dynamics.** arXiv:2410.11185, 2024.
     <https://arxiv.org/abs/2410.11185>
-16. **Discovering Network Dynamics with Neural Symbolic Regression.**
+11. **Discovering Network Dynamics with Neural Symbolic Regression.**
     Published online 23 October 2025; *Nature Computational Science*, volume 6, 2026.
     <https://www.nature.com/articles/s43588-025-00893-8>
-17. **ODEFormer: Symbolic Regression of Dynamical Systems with Transformers.** arXiv:2310.05573, 2023.
+12. **ODEFormer: Symbolic Regression of Dynamical Systems with Transformers.** arXiv:2310.05573, 2023.
     <https://arxiv.org/abs/2310.05573>
-18. Lee, J. et al. (2019). **Set Transformer: A Framework for Attention-based Permutation-Invariant Neural Networks.**
+13. Lee, J. et al. (2019). **Set Transformer: A Framework for Attention-based Permutation-Invariant Neural Networks.**
     <https://arxiv.org/abs/1810.00825>
-19. **DecoderLens: Layerwise Interpretation of Encoder-Decoder Transformers.** arXiv:2310.03686, 2023.
+14. **DecoderLens: Layerwise Interpretation of Encoder-Decoder Transformers.** arXiv:2310.03686, 2023.
     <https://arxiv.org/abs/2310.03686>
-20. Kornblith, S. et al. (2019). **Similarity of Neural Network Representations Revisited.**
+15. Kornblith, S. et al. (2019). **Similarity of Neural Network Representations Revisited.**
     <https://arxiv.org/abs/1905.00414>
-21. **Can Test-time Computation Mitigate Reproduction Bias in Neural Symbolic Regression?**
+16. **Can Test-time Computation Mitigate Reproduction Bias in Neural Symbolic Regression?**
     arXiv:2505.22081, 2025.
     <https://arxiv.org/abs/2505.22081>
-22. Hewitt, J., & Liang, P. (2019). **Designing and Interpreting Probes with Control Tasks.**
+17. Hewitt, J., & Liang, P. (2019). **Designing and Interpreting Probes with Control Tasks.**
     <https://arxiv.org/abs/1909.03368>
-23. **Towards Best Practices of Activation Patching in Language Models: Metrics and Methods.**
+18. **Towards Best Practices of Activation Patching in Language Models: Metrics and Methods.**
     arXiv:2309.16042, 2023.
     <https://arxiv.org/abs/2309.16042>
-24. **How to Use and Interpret Activation Patching.** arXiv:2404.15255, 2024.
+19. **How to Use and Interpret Activation Patching.** arXiv:2404.15255, 2024.
     <https://arxiv.org/abs/2404.15255>
-25. **End-to-end Symbolic Regression with Transformers.** arXiv:2204.10532, 2022.
+20. **End-to-end Symbolic Regression with Transformers.** arXiv:2204.10532, 2022.
     <https://arxiv.org/abs/2204.10532>
-26. La Cava, W. et al. (2021). **Contemporary Symbolic Regression Methods and their Relative Performance.**
+21. La Cava, W. et al. (2021). **Contemporary Symbolic Regression Methods and their Relative Performance.**
     arXiv:2107.14351.
     <https://arxiv.org/abs/2107.14351>
     実装：<https://github.com/EpistasisLab/srbench>
-27. Brunton, S. L., Proctor, J. L., & Kutz, J. N. (2016).
+22. Brunton, S. L., Proctor, J. L., & Kutz, J. N. (2016).
     **Discovering Governing Equations from Data by Sparse Identification of Nonlinear Dynamical Systems.**
     *Proceedings of the National Academy of Sciences*, 113(15), 3932–3937.
     <https://doi.org/10.1073/pnas.1517384113>
     実装：<https://faculty.washington.edu/sbrunton/sparsedynamics.zip>
-28. **SINDy-PI: A Robust Algorithm for Parallel Implicit Sparse Identification of Nonlinear Dynamics.**
+23. **SINDy-PI: A Robust Algorithm for Parallel Implicit Sparse Identification of Nonlinear Dynamics.**
     <https://doi.org/10.1098/rspa.2020.0279>
     実装：<https://github.com/dynamicslab/SINDy-PI>
-29. Huynh-Thu, V. A., & Geurts, P. (2018).
+24. Huynh-Thu, V. A., & Geurts, P. (2018).
     **dynGENIE3: Dynamical GENIE3 for the Inference of Gene Networks from Time Series Expression Data.**
     *Scientific Reports*, 8, 3384.
     <https://doi.org/10.1038/s41598-018-21715-0>
     実装：<http://www.montefiore.ulg.ac.be/~huynh-thu/dynGENIE3.html>
-30. Hu, E. J. et al. (2021). **LoRA: Low-Rank Adaptation of Large Language Models.**
+25. Hu, E. J. et al. (2021). **LoRA: Low-Rank Adaptation of Large Language Models.**
     arXiv:2106.09685.
     <https://arxiv.org/abs/2106.09685>
     実装：<https://github.com/microsoft/LoRA>
-31. **WeakIdent: Weak Formulation for Identifying Differential Equations Using Narrow-fit and Trimming.**
+26. **WeakIdent: Weak Formulation for Identifying Differential Equations Using Narrow-fit and Trimming.**
     *Journal of Computational Physics*, 2023.
     <https://www.sciencedirect.com/science/article/pii/S002199912300164X>
     実装：<https://github.com/sunghakang/WeakIdent>
-32. **Controllable Neural Symbolic Regression.** arXiv:2304.10336, 2023.
+27. **Controllable Neural Symbolic Regression.** arXiv:2304.10336, 2023.
     <https://arxiv.org/abs/2304.10336>
-33. **A Neural-Guided Dynamic Symbolic Network for Exploring Mathematical Expressions from Data.**
+28. **A Neural-Guided Dynamic Symbolic Network for Exploring Mathematical Expressions from Data.**
     arXiv:2309.13705, 2023.
     <https://arxiv.org/abs/2309.13705>
     実装：<https://github.com/AILWQ/DySymNet>
-34. **ODE Parameter Inference Using Adaptive Gradient Matching with Gaussian Processes.**
+29. **ODE Parameter Inference Using Adaptive Gradient Matching with Gaussian Processes.**
     *Proceedings of Machine Learning Research*, 31, 2013.
     <https://proceedings.mlr.press/v31/dondelinger13a.html>
-35. **A Layer-wise Analysis of Supervised Fine-Tuning.** ACL 2026.
+30. **A Layer-wise Analysis of Supervised Fine-Tuning.** ACL 2026.
     <https://arxiv.org/abs/2604.11838>
     <https://aclanthology.org/2026.acl-long.453/>
-36. **D-CODE: Discovering Closed-form ODEs from Observed Trajectories.** ICLR 2022.
+31. **D-CODE: Discovering Closed-form ODEs from Observed Trajectories.** ICLR 2022.
     <https://openreview.net/forum?id=wENMvIsxNN>
     実装：<https://github.com/ZhaozhiQIAN/D-CODE-ICLR-2022>
-37. **Deep Generative Symbolic Regression with Monte-Carlo Tree Search.**
+32. **Deep Generative Symbolic Regression with Monte-Carlo Tree Search.**
     arXiv:2302.11223, 2023.
     <https://arxiv.org/abs/2302.11223>
-38. **A Unified Framework for Deep Symbolic Regression.** NeurIPS 2022.
+33. **A Unified Framework for Deep Symbolic Regression.** NeurIPS 2022.
     <https://proceedings.neurips.cc/paper_files/paper/2022/hash/dbca58f35bddc6e4003b2dd80e42f838-Abstract-Conference.html>
     実装：<https://github.com/dso-org/deep-symbolic-optimization>
-39. Petersen, B. K. et al. (2021).
+34. Petersen, B. K. et al. (2021).
     **Deep Symbolic Regression: Recovering Mathematical Expressions from Data via Risk-seeking Policy Gradients.**
     <https://arxiv.org/abs/1912.04871>
-40. **Boolformer: Symbolic Regression of Logic Functions with Transformers.**
+35. **Boolformer: Symbolic Regression of Logic Functions with Transformers.**
     arXiv:2309.12207, 2023.
     <https://arxiv.org/abs/2309.12207>
     実装：<https://github.com/arthurenard/Boolformer>
