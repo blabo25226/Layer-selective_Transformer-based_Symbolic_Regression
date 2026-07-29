@@ -803,3 +803,193 @@ tmux new-session -d -s ltsr-auto -c "$PWD" \
 # memo20260727
 - probingの実装
 - 演算子セットの見直し。
+
+## 付録C. Google Colab Proで実際に行ったGPU_RUN1（2026-07-26〜29）
+
+### C.1 実行条件
+
+この節は、§11のColab手順を使って実際に行った最初のColab実行を記録する。
+成功した結果だけでなく、計算量爆発、runtime切断、継続run、未完了部分も含める。
+このGPU_RUN1は計算資源制約下のreduced runであり、全Phase・全networkを同一条件で完走したpaper runではない。
+
+- ブランチ: `20260726/gpu-scale-prep-colab`
+- 実行基盤: Google Colab Pro
+- 主なGPU: NVIDIA L4
+- 研究コード用Python: Python 3.10
+- Drive: `/content/drive/MyDrive/LTSR_colab`
+- Drive空き容量: 1 TB以上
+- repository: `/content/LTSR`
+- run種別: `reduced`
+- seeds: `0 1 2`
+- noise: `0.1`のみ
+- 計算量対策後のbeam: 主に`2`、Phase 8は`1`
+- Phase 7 target timeout: 最終的に240秒
+
+Colab UI kernelとは別にPython 3.10 workerを用意した。
+Driveにはcheckpoint、外部データ、run途中成果物、ログを保存し、Colab切断後も復元できる構成にした。
+
+### C.2 継続run
+
+長時間実行中にコード修正が複数回必要になったため、異なるcommitを同一runへ不透明に混ぜず、新しいrunへ成果物を継承した。
+
+- `colab_reduced_20260726_01`: Phase 0から開始し、Phase 4–6までの主要成果物を作成
+- `colab_reduced_20260728_01`: Phase 7 target checkpointおよび再開修正後の継続
+- `colab_reduced_20260729_01`: Phase 7 hard timeout、再開処理追加後の継続
+- `colab_reduced_20260729_02`: worker recycling追加後の継続。Phase 7縮小集計を保存
+- `colab_reduced_20260729_03`: 最適化したPhase 8用。`..._02`の成果物を継承
+
+継続runでは、元run、元manifest、元Git commit、コピーしたファイルとSHA256を`continuation.json`へ記録する。
+
+### C.3 Phase 0–6
+
+#### Phase 0
+
+- Drive mount、Python 3.10 worker、checkpoint、DREAM4、GSE112372を準備した。
+- GitHub上の存在しないcommit refをColabが開いて404になったため、Notebookが使うsource commitとDriveの`source_lock.json`を一致させる方式へ変更した。
+- GPU preflightで判明した依存関係・互換性の問題を修正した。
+
+#### Phase 1
+
+- 初期セルのエラーを修正し、合成データ成果物を作成した。
+- GPU_RUN1ではnoiseを`0.1`だけに限定し、他のnoise水準を省略した。
+
+#### Phase 2
+
+- エラーなく完了した。
+- smokeだけで完了扱いにせず、承認済みreduced設定を実行した。
+
+#### Phase 3
+
+- エラーなく完了した。
+- 実測は約10分だった。
+
+#### Phase 4
+
+- 最初の実行でエラーが発生した。
+- 修正後も計算時間が大きくなる見込みだったため一度停止し、beam、候補数、評価予算、不要な反復を削減した。
+- 同種の削減をPhase 5–8にも可能な範囲で反映した。
+- validationだけで層を選び、testを層rankingへ使わない原則は維持した。
+- 短縮後の設定で完了した。
+
+#### Phase 5
+
+- reduced本実行として完了した。
+- 条件別結果、paired comparisons、random-layer条件、top-vs-full評価などをsummaryへ保存した。
+
+#### Phase 6
+
+- CPU側が支配する処理で、L4の利点が小さい場面があった。
+- Colabの再接続停止、ページ更新不能、外出中のruntime切断が起きた。
+- 保存済み成果物からresumeし、最終的に完了した。
+- CPUを100%使用する処理をColab GPU runtimeで行うのは非効率だと判断した。
+
+### C.4 Phase 7で起きた計算量爆発
+
+Phase 7がGPU_RUN1で最も多くの時間とColab compute unitsを消費した。
+当初のreduced設定でも、3 seeds、Size10/100、network 1–5、Size100の全対象targetについて、
+`pretrained_oracle`、`selective_oracle`、`selective_corr`を評価する計画だった。
+
+Size100だけで約2,820 target evaluationsとなる。
+全targetが240秒へ到達する極端な場合、直列上限は次のとおりである。
+
+```text
+2820 × 240 / 3600 = 188時間
+```
+
+実際には全targetがtimeoutしたわけではないが、遅いtargetが全体時間を支配した。
+
+発生した問題:
+
+- 数時間実行後のColab切断
+- exit status 137（RAM不足またはOSによるprocess kill）
+- exit status 2（resume/checkpoint処理の不整合）
+- network完了まで最終JSONが作られず、Driveから進捗を判断しにくい
+- runtime切断時に長い計算を再度行う危険
+- BFGS、式簡約、特異な候補式による長時間化
+- L4でもCPU探索が律速する場面
+
+追加した対策:
+
+1. `seed / size / network`単位のshard
+2. Size100のtarget単位checkpoint
+3. target完了数と経過時間の保存
+4. 240秒のhard wall-clock timeout
+5. timeoutとdecode失敗をfailureとして保存
+6. 60 targetごとのworker recycling
+7. 3分ごとのDrive同期
+8. runtime再起動後の厳密なresume
+9. commit変更時のprovenance付き継続run
+
+#### 最終的なPhase 7採用範囲
+
+全15個のSize100 seed-network shard完走は、時間とcompute unitsの制約により断念した。
+結果値を見て都合よく選ぶのではなく、全3 seedで全条件が揃った最大の共通network集合を採用した。
+
+- included seeds: `0, 1, 2`
+- included networks: `1, 2, 3`
+- planned networks: `1, 2, 3, 4, 5`
+- conditions: `pretrained_oracle`, `selective_oracle`, `selective_corr`
+- 完全shard: 3 seeds × 3 networks = 9
+
+network 4–5の完了済み追加shardは削除せず、補足成果物として残したが主集計へ混ぜなかった。
+縮小理由、選択規則、対象seed/network、timeoutは次へ保存した。
+
+- `phase7_multiseed/summary.json`
+- `phase7_multiseed/curtailment.json`
+
+この結果は「DREAM4全5 networks完了」ではなく、計算制約付きの3 seeds × 3 networks結果として扱う。
+
+### C.5 Phase 8実行前に行った短縮
+
+Phase 8の本実行前にコードを調査し、次を確認した。
+
+- 同じ学習データからin-donor用とholdout用に式を2回decodeしていた
+- Phase 7のhard timeoutがPhase 8へ実際には適用されていなかった
+- PySR実行中もColab L4を占有する設計だった
+- donor fold途中のcheckpointがなかった
+- 2 seed並列時に100MモデルのcopyがRAMを圧迫する可能性があった
+
+実行前に次へ変更した。
+
+- NeSymReSはtrain donorから式を1回だけdecodeする
+- 同じ式をin-donorとholdout donorの両方で評価する
+- Phase 8は全target一律30秒timeout
+- donor fold単位のcheckpoint/resume
+- 不要model copyとCUDA cacheの解放
+- ColabではNeSymReSだけを実行
+- PySRはローカルCPUで12 iterationsを実行し、後から同じseed/foldへ統合
+
+最適化済みPhase 8は`colab_reduced_20260729_03`で実行する。
+本節更新時点では、最終Phase 8結果、ローカルPySR、Phase 9 validationは未完了である。
+
+### C.6 当初計画からの主な変更
+
+| 項目 | 当初 | GPU_RUN1での変更 | 理由 |
+|---|---|---|---|
+| noise | 複数水準 | `0.1`のみ | 計算量削減 |
+| smoke | 各段階で確認 | 接続・出力・致命的エラー確認だけ | smokeは研究結果にならない |
+| beam | 大きいbudget | 主に`2`、Phase 8は`1` | decode短縮 |
+| Phase 7 timeout | 長い・未統一 | 240秒hard timeout | pathological targetの上限 |
+| Phase 7保存 | network完了中心 | target checkpoint + worker recycle | 切断・137からの復旧 |
+| Phase 7 network | 1–5 | 主集計は1–3 | 全seed共通の完全比較単位 |
+| Phase 8 decode | train/holdoutで別decode | 1回生成して両方で評価 | 約半減かつ評価設計を改善 |
+| Phase 8 timeout | 実質なし | 最初から一律30秒 | 計算爆発防止 |
+| PySR | Colab内 | ローカルCPU | L4 units節約 |
+| code変更 | 同run resume | 新runへprovenance付き継承 | 再現性 |
+
+### C.7 GPU_RUN1から得た知見
+
+1. Phase 7の最大要因はGPU性能だけでなく、target数、条件数、BFGS、遅いtargetのtimeoutである。
+2. 上位GPUへ変更しても、PySR、BFGS、式簡約、MCTSなどCPU律速部分は比例して速くならない。
+3. 長時間runではtargetまたはfold単位checkpointが必須である。
+4. timeoutは途中から変えず、次回はrun開始前に統一する。
+5. 未完了runを切る場合はmetricを見て選ばず、全seed共通の完全比較単位を規則で決める。
+6. GPU学習・推論とCPU-only baseline・集計を分離する。
+
+### C.8 未完了作業
+
+- 最適化済みPhase 8 NeSymReS LODO
+- ローカルCPUでのPhase 8 PySR LODO
+- Colab成果物とローカルPySR成果物の統合
+- Phase 9 validation、archive、SHA256
+- 全5 DREAM4 networksを統一15秒budgetで再実行するGPU_RUN2
