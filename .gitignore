@@ -13,6 +13,9 @@ __pycache__/
 # Local experiment artifacts
 results/runs/
 results/archives/
+# Downloaded immutable GPU-run archives and their extracted staging copies.
+results/GPU_RUN1_drive/*
+!results/GPU_RUN1_drive/.gitkeep
 # Smoke runs are throwaway; keeping them untracked would block the next campaign,
 # which requires a completely clean working tree.
 graphs/*_smoke/
